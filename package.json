@@ -2,6 +2,7 @@
   "name": "product-feed-manager",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "npm@10.9.0",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -9,11 +10,12 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "deploy": "turbo run deploy",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "db:migrate": "cd apps/api && npx prisma migrate dev",
-    "db:generate": "cd apps/api && npx prisma generate",
-    "db:studio": "cd apps/api && npx prisma studio"
+    "db:migrate": "cd apps/api && npm run db:migrate",
+    "db:generate": "cd apps/api && npm run db:generate",
+    "db:studio": "cd apps/api && npm run db:studio"
   },
   "devDependencies": {
     "turbo": "^2.0.0"
