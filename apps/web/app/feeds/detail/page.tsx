@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { feedsApi } from '../../../lib/api';
 import { format } from 'date-fns';
@@ -15,7 +16,7 @@ const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }>
   PENDING: { label: 'Pending', icon: Clock, color: 'text-yellow-600' },
 };
 
-export default function FeedDetailPage() {
+function FeedDetailInner() {
   const searchParams = useSearchParams();
   const id = searchParams.get('id') ?? '';
 
@@ -140,5 +141,13 @@ export default function FeedDetailPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function FeedDetailPage() {
+  return (
+    <Suspense fallback={<div className="py-20 text-center text-gray-400">Loading…</div>}>
+      <FeedDetailInner />
+    </Suspense>
   );
 }
