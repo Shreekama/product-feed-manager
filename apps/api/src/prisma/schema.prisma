@@ -1,0 +1,309 @@
+// ─── Prisma Schema – Product Feed Manager ───────────────────────────────────
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum SyncStatus {
+  IDLE
+  SYNCING
+  FAILED
+}
+
+enum Platform {
+  GOOGLE
+  FACEBOOK
+  PINTEREST
+}
+
+enum OutputType {
+  GOOGLE_SHEETS
+  CSV
+  XML
+}
+
+enum FeedStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+// ─── Store ───────────────────────────────────────────────────────────────────
+// Represents an installed Shopify shop
+
+model Store {
+  id           String     @id @default(cuid())
+  shopDomain   String     @unique
+  accessToken  String     // encrypted at rest
+  installedAt  DateTime   @default(now())
+  syncStatus   SyncStatus @default(IDLE)
+  lastSyncAt   DateTime?
+  planName     String?
+  email        String?
+
+  products     Product[]
+  collections  Collection[]
+  feeds        Feed[]
+  webhooks     Webhook[]
+  googleTokens GoogleToken[]
+
+  @@map("stores")
+}
+
+// ─── Product ─────────────────────────────────────────────────────────────────
+
+model Product {
+  id               String    @id @default(cuid())
+  shopifyId        String
+  storeId          String
+  title            String
+  vendor           String?
+  productType      String?
+  handle           String?
+  status           String    @default("active") // active | archived | draft
+  tags             String[]
+  bodyHtml         String?
+  publishedAt      DateTime?
+  excludeFromFeeds Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  store       Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  variants    Variant[]
+  metafields  Metafield[]
+  collections ProductCollection[]
+
+  @@unique([shopifyId, storeId])
+  @@index([storeId])
+  @@index([vendor])
+  @@index([status])
+  @@map("products")
+}
+
+// ─── Variant ─────────────────────────────────────────────────────────────────
+
+model Variant {
+  id               String   @id @default(cuid())
+  shopifyId        String
+  productId        String
+  sku              String?
+  title            String
+  price            Decimal  @db.Decimal(10, 2)
+  compareAtPrice   Decimal? @db.Decimal(10, 2)
+  weight           Float?
+  weightUnit       String?
+  inventoryItemId  String?
+  barcode          String?
+  taxable          Boolean  @default(true)
+  requiresShipping Boolean  @default(true)
+  option1          String?
+  option2          String?
+  option3          String?
+  position         Int      @default(1)
+
+  // Cached media resolved from SKU
+  mediaCache    Json?     // { images: string[], videos: string[], cachedAt: ISO }
+  mediaCachedAt DateTime?
+
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventoryLevels InventoryLevel[]
+
+  @@unique([shopifyId, productId])
+  @@index([sku])
+  @@index([productId])
+  @@map("variants")
+}
+
+// ─── Inventory Level ─────────────────────────────────────────────────────────
+
+model InventoryLevel {
+  id          String   @id @default(cuid())
+  variantId   String
+  locationId  String
+  available   Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, locationId])
+  @@index([variantId])
+  @@map("inventory_levels")
+}
+
+// ─── Metafield ───────────────────────────────────────────────────────────────
+
+model Metafield {
+  id         String  @id @default(cuid())
+  shopifyId  String
+  productId  String?
+  namespace  String
+  key        String
+  value      String  @db.Text
+  type       String  // metafield type (single_line_text_field, json, etc.)
+  ownerType  String  @default("product")
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([shopifyId])
+  @@index([productId])
+  @@index([namespace, key])
+  @@map("metafields")
+}
+
+// ─── Collection ──────────────────────────────────────────────────────────────
+
+model Collection {
+  id        String  @id @default(cuid())
+  shopifyId String
+  storeId   String
+  title     String
+  handle    String?
+
+  store    Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products ProductCollection[]
+
+  @@unique([shopifyId, storeId])
+  @@map("collections")
+}
+
+model ProductCollection {
+  productId    String
+  collectionId String
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([productId, collectionId])
+  @@map("product_collections")
+}
+
+// ─── Media Cache ─────────────────────────────────────────────────────────────
+// Shared across stores — keyed by baseSku
+
+model MediaCache {
+  id        String   @id @default(cuid())
+  baseSku   String   @unique
+  images    String[] // ordered list of image URLs
+  videos    String[] // ordered list of video URLs
+  cachedAt  DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("media_cache")
+}
+
+// ─── Feed ────────────────────────────────────────────────────────────────────
+
+model Feed {
+  id              String     @id @default(cuid())
+  storeId         String
+  name            String
+  platform        Platform
+  country         String     @default("US")
+  outputType      OutputType
+  status          FeedStatus @default(ACTIVE)
+
+  // Google Sheets output
+  googleSheetId   String?
+  googleSheetUrl  String?
+  googleSheetTab  String?
+
+  // Column mappings: Array<{ feedColumn: string; sourceType: 'product'|'variant'|'metafield'|'computed'; sourceKey: string; transform?: string }>
+  columnMappings  Json       @default("[]")
+
+  // Filter rules: Array<{ field: string; operator: string; value: string }>
+  filterRules     Json       @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store    Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  schedule FeedSchedule?
+  runs     FeedRun[]
+
+  @@index([storeId])
+  @@map("feeds")
+}
+
+// ─── Feed Schedule ───────────────────────────────────────────────────────────
+
+model FeedSchedule {
+  id         String   @id @default(cuid())
+  feedId     String   @unique
+  cronExpr   String   // e.g. "0 */6 * * *" — every 6 hours
+  nextRunAt  DateTime
+  isActive   Boolean  @default(true)
+  timezone   String   @default("UTC")
+
+  feed Feed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@index([nextRunAt, isActive])
+  @@map("feed_schedules")
+}
+
+// ─── Feed Run (Execution Log) ─────────────────────────────────────────────────
+
+model FeedRun {
+  id               String    @id @default(cuid())
+  feedId           String
+  status           RunStatus @default(PENDING)
+  recordsProcessed Int       @default(0)
+  recordsSkipped   Int       @default(0)
+  errorMessage     String?   @db.Text
+  outputUrl        String?   // URL to CSV/XML or Sheets link
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  durationMs       Int?
+
+  feed Feed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@index([feedId])
+  @@index([startedAt])
+  @@map("feed_runs")
+}
+
+// ─── Webhook Registry ────────────────────────────────────────────────────────
+
+model Webhook {
+  id        String @id @default(cuid())
+  storeId   String
+  shopifyId String
+  topic     String
+  address   String
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, topic])
+  @@map("webhooks")
+}
+
+// ─── Google OAuth Token ───────────────────────────────────────────────────────
+
+model GoogleToken {
+  id           String   @id @default(cuid())
+  storeId      String
+  accessToken  String   @db.Text
+  refreshToken String   @db.Text
+  expiresAt    DateTime
+  scope        String
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId])
+  @@map("google_tokens")
+}
