@@ -1,0 +1,37 @@
+name = "product-feed-manager-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+APP_URL = "https://product-feed-manager-api.workers.dev"
+WEB_URL = "https://product-feed-manager.pages.dev"
+MEDIA_BASE_URL = "https://cdn.example.com/media"
+MEDIA_MAX_IMAGES = "20"
+MEDIA_CACHE_TTL = "21600"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "product-feed-manager"
+database_id = "YOUR_D1_DATABASE_ID"
+
+[[kv_namespaces]]
+binding = "MEDIA_KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+[[r2_buckets]]
+binding = "FEED_R2"
+bucket_name = "feed-output"
+
+[[queues.producers]]
+binding = "FEED_QUEUE"
+queue = "feed-jobs"
+
+[[queues.consumers]]
+queue = "feed-jobs"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+
+[triggers]
+crons = ["* * * * *"]
