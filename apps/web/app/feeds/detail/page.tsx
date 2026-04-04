@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { feedsApi } from '../../lib/api';
+import { feedsApi } from '../../../lib/api';
 import { format } from 'date-fns';
 import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, CheckCircle, XCircle, Clock } from 'lucide-react';
