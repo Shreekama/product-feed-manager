@@ -3,6 +3,7 @@ export interface Env {
   MEDIA_KV: KVNamespace;
   FEED_R2: R2Bucket;
   FEED_QUEUE: Queue;
+  ASSETS: Fetcher;
   // Vars
   SHOPIFY_API_KEY: string;
   SHOPIFY_API_SECRET: string;
