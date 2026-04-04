@@ -47,9 +47,15 @@ app.get('/api/setup', async (c) => {
   }
 });
 
-// ─── Serve frontend static files for all non-API routes ───────────────────────
+// ─── Serve frontend static files / SPA fallback for all non-API routes ───────
 app.get('*', async (c) => {
-  return c.env.ASSETS.fetch(c.req.raw);
+  const res = await c.env.ASSETS.fetch(c.req.raw);
+  if (res.status === 404) {
+    // SPA fallback: unknown paths (e.g. /feeds/abc123) get index.html
+    // and client-side routing takes over.
+    return c.env.ASSETS.fetch(new Request(new URL('/', c.req.url).toString()));
+  }
+  return res;
 });
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

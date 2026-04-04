@@ -1,5 +1,11 @@
 'use client';
 
+// Required for Next.js static export — IDs are unknown at build time,
+// client-side routing handles the actual fetch.
+export function generateStaticParams() {
+  return [];
+}
+
 import { useQuery } from '@tanstack/react-query';
 import { feedsApi } from '../../../lib/api';
 import { format } from 'date-fns';
