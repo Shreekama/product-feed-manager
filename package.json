@@ -9,8 +9,8 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
-    "build": "cd apps/web && npm run build && cd ../api && npm run build",
-    "deploy": "cd apps/web && npm run build && cd ../api && npx wrangler deploy",
+    "build": "cd apps/web && npm install && npm run build && cd ../api && npm install",
+    "deploy": "cd apps/web && npm install && npm run build && cd ../api && npm install && npx wrangler deploy",
     "lint": "turbo run lint",
     "test": "turbo run test"
   },
