@@ -100,7 +100,7 @@ export default function DashboardPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <Link
-                        href={`/feeds/${feed.id}`}
+                        href={`/feeds/detail?id=${feed.id}`}
                         className="text-xs text-brand-600 hover:underline"
                       >
                         Edit
