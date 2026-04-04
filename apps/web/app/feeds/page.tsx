@@ -112,7 +112,7 @@ export default function FeedsPage() {
                     Run
                   </button>
                   <Link
-                    href={`/feeds/${feed.id}`}
+                    href={`/feeds/detail?id=${feed.id}`}
                     className="inline-flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-md transition-colors"
                   >
                     <Pencil className="w-3 h-3" />

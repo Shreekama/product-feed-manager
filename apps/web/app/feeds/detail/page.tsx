@@ -1,9 +1,9 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { feedsApi } from '../../../lib/api';
+import { feedsApi } from '../../lib/api';
 import { format } from 'date-fns';
-import { useParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, CheckCircle, XCircle, Clock } from 'lucide-react';
 import Link from 'next/link';
 import { clsx } from 'clsx';
@@ -15,20 +15,24 @@ const STATUS_CONFIG: Record<string, { label: string; icon: any; color: string }>
   PENDING: { label: 'Pending', icon: Clock, color: 'text-yellow-600' },
 };
 
-export default function FeedDetailClient() {
-  const { id } = useParams<{ id: string }>();
+export default function FeedDetailPage() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get('id') ?? '';
 
   const { data: feed, isLoading } = useQuery({
     queryKey: ['feed', id],
     queryFn: () => feedsApi.get(id),
+    enabled: !!id,
   });
 
   const { data: runs = [] } = useQuery({
     queryKey: ['feed-runs', id],
     queryFn: () => feedsApi.getRuns(id, 20),
+    enabled: !!id,
     refetchInterval: 10_000,
   });
 
+  if (!id) return <div className="py-20 text-center text-red-500">No feed ID specified</div>;
   if (isLoading) return <div className="py-20 text-center text-gray-400">Loading…</div>;
   if (!feed) return <div className="py-20 text-center text-red-500">Feed not found</div>;
 
