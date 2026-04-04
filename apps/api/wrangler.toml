@@ -12,23 +12,23 @@ MEDIA_CACHE_TTL = "21600"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "product-feed-manager"
-database_id = "YOUR_D1_DATABASE_ID"
+database_name = "shopify-product-feed-db"
+database_id = "1f0b3ee3-2b01-4aaf-82fa-69f91648bccd"
 
 [[kv_namespaces]]
 binding = "MEDIA_KV"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "96826c6a933e4c3d8e6b9b68e4641507"
 
 [[r2_buckets]]
 binding = "FEED_R2"
-bucket_name = "feed-output"
+bucket_name = "shopify-product-feed-output"
 
 [[queues.producers]]
 binding = "FEED_QUEUE"
-queue = "feed-jobs"
+queue = "shopify-product-feed-jobs"
 
 [[queues.consumers]]
-queue = "feed-jobs"
+queue = "shopify-product-feed-jobs"
 max_batch_size = 10
 max_batch_timeout = 30
 max_retries = 3
