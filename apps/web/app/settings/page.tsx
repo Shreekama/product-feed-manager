@@ -1,9 +1,10 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle, ExternalLink } from 'lucide-react';
 
-export default function SettingsPage() {
+function SettingsInner() {
   const params = useSearchParams();
   const googleConnected = params.get('google_connected') === 'true';
   const shop = params.get('shop') || '';
@@ -72,5 +73,13 @@ export default function SettingsPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="py-20 text-center text-gray-400">Loading…</div>}>
+      <SettingsInner />
+    </Suspense>
   );
 }
