@@ -3,6 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+# Serves the Next.js static export (apps/web/out) at all non-/api/* routes
+[assets]
+directory = "../web/out"
+binding = "ASSETS"
+
 [vars]
 APP_URL = "https://product-feed-manager-api.workers.dev"
 WEB_URL = "https://product-feed-manager.pages.dev"

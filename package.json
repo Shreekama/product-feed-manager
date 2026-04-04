@@ -9,13 +9,10 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
-    "build": "turbo run build",
-    "deploy": "turbo run deploy",
+    "build": "cd apps/web && npm run build && cd ../api && npm run build",
+    "deploy": "cd apps/web && npm run build && cd ../api && npx wrangler deploy",
     "lint": "turbo run lint",
-    "test": "turbo run test",
-    "db:migrate": "cd apps/api && npm run db:migrate",
-    "db:generate": "cd apps/api && npm run db:generate",
-    "db:studio": "cd apps/api && npm run db:studio"
+    "test": "turbo run test"
   },
   "devDependencies": {
     "turbo": "^2.0.0"
