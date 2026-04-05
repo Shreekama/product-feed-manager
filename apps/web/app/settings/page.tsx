@@ -2,23 +2,21 @@
 
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
+import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, Link2 } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 import { clsx } from 'clsx';
 
 const SHOP_DOMAIN = 'd7f63b.myshopify.com';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
-// ── Sync phase config ─────────────────────────────────────────────────────────
 const PHASE_CONFIG: Record<string, { label: string; pct: number; pulse: boolean }> = {
-  submitting:  { label: 'Connecting to Shopify…',        pct: 10,  pulse: true  },
-  waiting:     { label: 'Shopify is preparing your data…', pct: 35, pulse: true  },
-  processing:  { label: 'Importing products…',            pct: 70,  pulse: true  },
+  submitting:  { label: 'Connecting to Shopify…',          pct: 10,  pulse: true  },
+  waiting:     { label: 'Shopify is preparing your data…', pct: 35,  pulse: true  },
+  processing:  { label: 'Importing products…',             pct: 70,  pulse: true  },
   done:        { label: 'Sync complete',                   pct: 100, pulse: false },
-  failed:      { label: 'Sync failed',                    pct: 100, pulse: false },
+  failed:      { label: 'Sync failed',                     pct: 100, pulse: false },
 };
 
-// ── Sync status card ──────────────────────────────────────────────────────────
 function SyncCard() {
   const [syncData, setSyncData] = useState<any>(null);
   const [starting, setStarting] = useState(false);
@@ -27,16 +25,16 @@ function SyncCard() {
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/shopify/sync/status`);
-      const data = await res.json();
-      setSyncData(data);
+      setSyncData(await res.json());
     } catch { /* silent */ }
   }, []);
 
-  // Poll while syncing
   useEffect(() => {
     fetchStatus();
-    const isSyncing = syncData?.status === 'SYNCING';
-    if (!isSyncing) return;
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    if (syncData?.status !== 'SYNCING') return;
     const id = setInterval(fetchStatus, 3000);
     return () => clearInterval(id);
   }, [fetchStatus, syncData?.status]);
@@ -55,8 +53,8 @@ function SyncCard() {
     }
   };
 
-  const status = syncData?.status || 'IDLE';
-  const progress = syncData?.progress;
+  const status    = syncData?.status;
+  const progress  = syncData?.progress;
   const isSyncing = status === 'SYNCING';
   const isFailed  = status === 'FAILED' || progress?.phase === 'failed';
   const isDone    = progress?.phase === 'done';
@@ -65,6 +63,42 @@ function SyncCard() {
   const pct       = cfg?.pct ?? 0;
   const processed = progress?.processed ?? 0;
 
+  // ── Not connected yet ─────────────────────────────────────────────────────
+  if (status === 'NOT_CONNECTED') {
+    const installUrl = `${API_URL}/shopify/install?shop=${SHOP_DOMAIN}`;
+    return (
+      <div className="bg-white rounded-xl border border-amber-200 p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+          <h2 className="font-medium text-gray-700">Shopify Store Not Connected</h2>
+        </div>
+
+        <p className="text-sm text-gray-500">
+          The app needs to be installed on <span className="font-mono font-medium text-gray-700">{SHOP_DOMAIN}</span> to sync products.
+          This is a one-time step — click the button below and approve the permissions in Shopify.
+        </p>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+          <p className="font-medium">Before clicking, make sure in your Shopify Partner dashboard:</p>
+          <p>App setup → Allowed redirection URLs → add:</p>
+          <code className="block bg-white border border-amber-200 rounded px-2 py-1 font-mono text-amber-900 break-all">
+            {typeof window !== 'undefined' ? window.location.origin : 'https://your-worker-url'}/api/shopify/callback
+          </code>
+        </div>
+
+        <a
+          href={installUrl}
+          className="inline-flex items-center gap-2 bg-[#008060] hover:bg-[#006e52] text-white px-5 py-2.5 rounded-md text-sm font-medium transition-colors"
+        >
+          <Link2 className="w-4 h-4" />
+          Connect {SHOP_DOMAIN}
+          <ExternalLink className="w-3 h-3 opacity-70" />
+        </a>
+      </div>
+    );
+  }
+
+  // ── Connected — show sync controls ────────────────────────────────────────
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <div className="flex items-center justify-between">
@@ -72,52 +106,40 @@ function SyncCard() {
         <span className="text-xs text-gray-400 font-mono">{SHOP_DOMAIN}</span>
       </div>
 
-      {/* Stats row */}
       <div className="flex items-center gap-6 text-sm">
         <div className="flex items-center gap-1.5 text-gray-600">
           <Package className="w-4 h-4 text-brand-600" />
           <span className="font-semibold">{syncData?.productCount ?? '—'}</span>
           <span className="text-gray-400">products</span>
         </div>
-        {syncData?.lastSyncAt && (
-          <div className="text-gray-400 text-xs">
+        {syncData?.lastSyncAt && !isSyncing && (
+          <span className="text-gray-400 text-xs">
             Last sync: {formatDistanceToNow(new Date(syncData.lastSyncAt), { addSuffix: true })}
-          </div>
+          </span>
         )}
       </div>
 
-      {/* Progress bar (only shown when syncing or just done) */}
       {(isSyncing || isDone || isFailed) && (
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-gray-500">
             <span className={clsx(isFailed && 'text-red-500')}>
-              {isFailed ? progress?.error || 'Sync failed' : cfg?.label}
+              {isFailed ? (progress?.error || 'Sync failed') : cfg?.label}
               {phase === 'processing' && processed > 0 && (
                 <span className="ml-1 text-gray-400">— {processed} synced</span>
               )}
             </span>
             {!isFailed && <span>{pct}%</span>}
           </div>
-
-          {/* Bar track */}
           <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
             {isFailed ? (
               <div className="h-full w-full bg-red-400 rounded-full" />
             ) : (
               <div
-                className={clsx(
-                  'h-full rounded-full transition-all duration-700',
-                  isDone ? 'bg-green-500' : 'bg-brand-600',
-                  cfg?.pulse && 'relative overflow-hidden',
-                )}
+                className={clsx('h-full rounded-full transition-all duration-700', isDone ? 'bg-green-500' : 'bg-brand-600')}
                 style={{ width: `${pct}%` }}
               >
-                {/* Shimmer animation while processing */}
                 {cfg?.pulse && (
-                  <span
-                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
-                    style={{ animation: 'shimmer 1.5s infinite' }}
-                  />
+                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent" style={{ animation: 'shimmer 1.5s infinite' }} />
                 )}
               </div>
             )}
@@ -125,7 +147,6 @@ function SyncCard() {
         </div>
       )}
 
-      {/* Error message */}
       {error && (
         <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
@@ -133,22 +154,18 @@ function SyncCard() {
         </div>
       )}
 
-      {/* Buttons */}
       <div className="flex items-center gap-3">
         <button
           onClick={startSync}
           disabled={isSyncing || starting}
           className={clsx(
             'inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-            isSyncing || starting
-              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              : 'bg-brand-600 hover:bg-brand-700 text-white',
+            isSyncing || starting ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700 text-white',
           )}
         >
           <RefreshCw className={clsx('w-4 h-4', (isSyncing || starting) && 'animate-spin')} />
           {isSyncing ? 'Syncing…' : starting ? 'Starting…' : 'Full Sync'}
         </button>
-
         {isDone && (
           <div className="flex items-center gap-1.5 text-green-600 text-sm">
             <CheckCircle className="w-4 h-4" />
@@ -157,18 +174,11 @@ function SyncCard() {
         )}
       </div>
 
-      {/* Shimmer keyframe */}
-      <style>{`
-        @keyframes shimmer {
-          0%   { transform: translateX(-100%); }
-          100% { transform: translateX(200%); }
-        }
-      `}</style>
+      <style>{`@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } }`}</style>
     </div>
   );
 }
 
-// ── Settings inner (uses useSearchParams) ─────────────────────────────────────
 function SettingsInner() {
   const params = useSearchParams();
   const googleConnected = params.get('google_connected') === 'true';
@@ -177,24 +187,19 @@ function SettingsInner() {
     <div className="max-w-2xl space-y-6">
       <h1 className="text-xl font-semibold">Settings</h1>
 
-      {/* Product Sync */}
       <SyncCard />
 
-      {/* Google Sheets */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
         <h2 className="font-medium text-gray-700">Google Sheets Integration</h2>
-
         {googleConnected && (
           <div className="flex items-center gap-2 text-green-600 text-sm">
             <CheckCircle className="w-4 h-4" />
             Google account connected successfully!
           </div>
         )}
-
         <p className="text-sm text-gray-500">
           Connect your Google account to export feeds directly to Google Sheets.
         </p>
-
         <a
           href={`${API_URL}/auth/google?shop=${SHOP_DOMAIN}`}
           className="inline-flex items-center gap-2 bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
