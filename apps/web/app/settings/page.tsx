@@ -1,37 +1,202 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, ExternalLink } from 'lucide-react';
+import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package } from 'lucide-react';
+import { format, formatDistanceToNow } from 'date-fns';
+import { clsx } from 'clsx';
 
+const SHOP_DOMAIN = 'd7f63b.myshopify.com';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
+
+// ── Sync phase config ─────────────────────────────────────────────────────────
+const PHASE_CONFIG: Record<string, { label: string; pct: number; pulse: boolean }> = {
+  submitting:  { label: 'Connecting to Shopify…',        pct: 10,  pulse: true  },
+  waiting:     { label: 'Shopify is preparing your data…', pct: 35, pulse: true  },
+  processing:  { label: 'Importing products…',            pct: 70,  pulse: true  },
+  done:        { label: 'Sync complete',                   pct: 100, pulse: false },
+  failed:      { label: 'Sync failed',                    pct: 100, pulse: false },
+};
+
+// ── Sync status card ──────────────────────────────────────────────────────────
+function SyncCard() {
+  const [syncData, setSyncData] = useState<any>(null);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/shopify/sync/status`);
+      const data = await res.json();
+      setSyncData(data);
+    } catch { /* silent */ }
+  }, []);
+
+  // Poll while syncing
+  useEffect(() => {
+    fetchStatus();
+    const isSyncing = syncData?.status === 'SYNCING';
+    if (!isSyncing) return;
+    const id = setInterval(fetchStatus, 3000);
+    return () => clearInterval(id);
+  }, [fetchStatus, syncData?.status]);
+
+  const startSync = async () => {
+    setStarting(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/shopify/sync`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json() as any).error || 'Failed');
+      await fetchStatus();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const status = syncData?.status || 'IDLE';
+  const progress = syncData?.progress;
+  const isSyncing = status === 'SYNCING';
+  const isFailed  = status === 'FAILED' || progress?.phase === 'failed';
+  const isDone    = progress?.phase === 'done';
+  const phase     = progress?.phase || (isSyncing ? 'processing' : 'idle');
+  const cfg       = PHASE_CONFIG[phase];
+  const pct       = cfg?.pct ?? 0;
+  const processed = progress?.processed ?? 0;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-medium text-gray-700">Product Sync</h2>
+        <span className="text-xs text-gray-400 font-mono">{SHOP_DOMAIN}</span>
+      </div>
+
+      {/* Stats row */}
+      <div className="flex items-center gap-6 text-sm">
+        <div className="flex items-center gap-1.5 text-gray-600">
+          <Package className="w-4 h-4 text-brand-600" />
+          <span className="font-semibold">{syncData?.productCount ?? '—'}</span>
+          <span className="text-gray-400">products</span>
+        </div>
+        {syncData?.lastSyncAt && (
+          <div className="text-gray-400 text-xs">
+            Last sync: {formatDistanceToNow(new Date(syncData.lastSyncAt), { addSuffix: true })}
+          </div>
+        )}
+      </div>
+
+      {/* Progress bar (only shown when syncing or just done) */}
+      {(isSyncing || isDone || isFailed) && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span className={clsx(isFailed && 'text-red-500')}>
+              {isFailed ? progress?.error || 'Sync failed' : cfg?.label}
+              {phase === 'processing' && processed > 0 && (
+                <span className="ml-1 text-gray-400">— {processed} synced</span>
+              )}
+            </span>
+            {!isFailed && <span>{pct}%</span>}
+          </div>
+
+          {/* Bar track */}
+          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+            {isFailed ? (
+              <div className="h-full w-full bg-red-400 rounded-full" />
+            ) : (
+              <div
+                className={clsx(
+                  'h-full rounded-full transition-all duration-700',
+                  isDone ? 'bg-green-500' : 'bg-brand-600',
+                  cfg?.pulse && 'relative overflow-hidden',
+                )}
+                style={{ width: `${pct}%` }}
+              >
+                {/* Shimmer animation while processing */}
+                {cfg?.pulse && (
+                  <span
+                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                    style={{ animation: 'shimmer 1.5s infinite' }}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Error message */}
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Buttons */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={startSync}
+          disabled={isSyncing || starting}
+          className={clsx(
+            'inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
+            isSyncing || starting
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-brand-600 hover:bg-brand-700 text-white',
+          )}
+        >
+          <RefreshCw className={clsx('w-4 h-4', (isSyncing || starting) && 'animate-spin')} />
+          {isSyncing ? 'Syncing…' : starting ? 'Starting…' : 'Full Sync'}
+        </button>
+
+        {isDone && (
+          <div className="flex items-center gap-1.5 text-green-600 text-sm">
+            <CheckCircle className="w-4 h-4" />
+            Complete — {processed} products imported
+          </div>
+        )}
+      </div>
+
+      {/* Shimmer keyframe */}
+      <style>{`
+        @keyframes shimmer {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(200%); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ── Settings inner (uses useSearchParams) ─────────────────────────────────────
 function SettingsInner() {
   const params = useSearchParams();
   const googleConnected = params.get('google_connected') === 'true';
-  const shop = params.get('shop') || '';
-
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
   return (
     <div className="max-w-2xl space-y-6">
       <h1 className="text-xl font-semibold">Settings</h1>
 
+      {/* Product Sync */}
+      <SyncCard />
+
       {/* Google Sheets */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
         <h2 className="font-medium text-gray-700">Google Sheets Integration</h2>
 
-        {googleConnected ? (
+        {googleConnected && (
           <div className="flex items-center gap-2 text-green-600 text-sm">
             <CheckCircle className="w-4 h-4" />
             Google account connected successfully!
           </div>
-        ) : (
-          <p className="text-sm text-gray-500">
-            Connect your Google account to export feeds directly to Google Sheets.
-          </p>
         )}
 
+        <p className="text-sm text-gray-500">
+          Connect your Google account to export feeds directly to Google Sheets.
+        </p>
+
         <a
-          href={`${API_URL}/auth/google?shop=${shop}`}
+          href={`${API_URL}/auth/google?shop=${SHOP_DOMAIN}`}
           className="inline-flex items-center gap-2 bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -43,34 +208,6 @@ function SettingsInner() {
           {googleConnected ? 'Reconnect Google' : 'Connect Google Account'}
           <ExternalLink className="w-3 h-3 text-gray-400" />
         </a>
-      </div>
-
-      {/* Sync */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-        <h2 className="font-medium text-gray-700">Product Sync</h2>
-        <p className="text-sm text-gray-500">
-          Trigger a full product re-sync from Shopify. This uses the Bulk Operations API and may take a few minutes.
-        </p>
-        <button
-          onClick={async () => {
-            const shopDomain = prompt('Enter shop domain (e.g. mystore.myshopify.com):');
-            if (!shopDomain) return;
-            try {
-              const res = await fetch(`${API_URL}/shopify/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ shopDomain }),
-              });
-              const data = await res.json();
-              alert(data.message || 'Sync started');
-            } catch {
-              alert('Failed to trigger sync');
-            }
-          }}
-          className="bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-md text-sm font-medium transition-colors"
-        >
-          Trigger Full Sync
-        </button>
       </div>
     </div>
   );

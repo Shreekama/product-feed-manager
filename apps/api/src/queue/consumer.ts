@@ -31,40 +31,55 @@ export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
 
 // ─── Bulk Sync Handler ────────────────────────────────────────────────────────
 
+const PROGRESS_TTL = 3600; // 1 hour
+
+async function setProgress(env: Env, shopDomain: string, data: object) {
+  await env.MEDIA_KV.put(
+    `sync_progress:${shopDomain}`,
+    JSON.stringify({ ...data, updatedAt: new Date().toISOString() }),
+    { expirationTtl: PROGRESS_TTL },
+  );
+}
+
 async function handleBulkSync(
   data: { shopDomain: string; accessToken: string; storeId: string },
   env: Env,
 ): Promise<void> {
   const { shopDomain, accessToken, storeId } = data;
   const db = getDb(env);
+  const startedAt = new Date().toISOString();
 
   console.log(`[${shopDomain}] Starting bulk sync`);
 
-  // Mark store as syncing
-  await db
-    .update(stores)
-    .set({ syncStatus: 'SYNCING', updatedAt: new Date().toISOString() })
-    .where(eq(stores.id, storeId));
+  await Promise.all([
+    db.update(stores).set({ syncStatus: 'SYNCING', updatedAt: startedAt }).where(eq(stores.id, storeId)),
+    setProgress(env, shopDomain, { phase: 'submitting', processed: 0, startedAt }),
+  ]);
 
   try {
     const operationId = await submitBulkOperation(shopDomain, accessToken);
+    await setProgress(env, shopDomain, { phase: 'waiting', processed: 0, startedAt });
+
     const downloadUrl = await pollBulkOperation(shopDomain, accessToken, operationId);
 
     if (!downloadUrl) {
       console.warn(`[${shopDomain}] Bulk op returned no data`);
+      await setProgress(env, shopDomain, { phase: 'done', processed: 0, startedAt });
       await markSyncDone(db, storeId);
       return;
     }
 
-    await processJsonlStream(downloadUrl, storeId, db);
+    await setProgress(env, shopDomain, { phase: 'processing', processed: 0, startedAt });
+    const processed = await processJsonlStream(downloadUrl, storeId, db, env, shopDomain, startedAt);
+    await setProgress(env, shopDomain, { phase: 'done', processed, startedAt });
     await markSyncDone(db, storeId);
-    console.log(`[${shopDomain}] Bulk sync completed`);
-  } catch (err) {
+    console.log(`[${shopDomain}] Bulk sync completed — ${processed} products`);
+  } catch (err: any) {
     console.error(`[${shopDomain}] Bulk sync failed:`, err);
-    await db
-      .update(stores)
-      .set({ syncStatus: 'FAILED', updatedAt: new Date().toISOString() })
-      .where(eq(stores.id, storeId));
+    await Promise.all([
+      db.update(stores).set({ syncStatus: 'FAILED', updatedAt: new Date().toISOString() }).where(eq(stores.id, storeId)),
+      setProgress(env, shopDomain, { phase: 'failed', error: err.message, startedAt }),
+    ]);
     throw err;
   }
 }
@@ -154,7 +169,10 @@ async function processJsonlStream(
   downloadUrl: string,
   storeId: string,
   db: any,
-): Promise<void> {
+  env: Env,
+  shopDomain: string,
+  startedAt: string,
+): Promise<number> {
   const res = await fetch(downloadUrl);
   if (!res.ok || !res.body) {
     throw new Error(`Failed to fetch bulk result: ${res.status}`);
@@ -166,6 +184,7 @@ async function processJsonlStream(
   const metafieldBuffer: any[] = [];
 
   const productMap = new Map<string, string>(); // shopifyProductId → dbId
+  let totalProcessed = 0;
 
   // Stream JSONL using TextDecoderStream
   const reader = res.body
@@ -205,7 +224,10 @@ async function processJsonlStream(
       }
 
       if (productBuffer.length >= BATCH_SIZE) {
-        await upsertProductBatch(productBuffer.splice(0), productMap, db);
+        const batch = productBuffer.splice(0);
+        await upsertProductBatch(batch, productMap, db);
+        totalProcessed += batch.length;
+        await setProgress(env, shopDomain, { phase: 'processing', processed: totalProcessed, startedAt });
       }
     }
   }
@@ -222,10 +244,12 @@ async function processJsonlStream(
 
   if (productBuffer.length > 0) {
     await upsertProductBatch(productBuffer, productMap, db);
+    totalProcessed += productBuffer.length;
   }
 
   await upsertVariantBatch(variantBuffer, storeId, productMap, inventoryBuffer, db);
   await upsertMetafieldBatch(metafieldBuffer, productMap, db);
+  return totalProcessed;
 }
 
 function mapProductNode(node: any, storeId: string) {
