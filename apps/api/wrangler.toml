@@ -9,10 +9,8 @@ directory = "../web/out"
 binding = "ASSETS"
 
 [vars]
-APP_URL = "https://product-feed-manager-api.workers.dev"
-WEB_URL = "https://product-feed-manager.pages.dev"
-MEDIA_BASE_URL = "https://cdn.example.com/media"
-MEDIA_MAX_IMAGES = "20"
+APP_URL = "https://product-feed-manager.apps.shreekama.net"
+WEB_URL = "https://product-feed-manager.apps.shreekama.net"
 MEDIA_CACHE_TTL = "21600"
 
 [[d1_databases]]
