@@ -77,7 +77,8 @@ shopifyRoutes.get('/install', (c) => {
   if (!shop) return c.text('Missing shop parameter', 400);
 
   const apiKey = c.env.SHOPIFY_API_KEY;
-  const redirectUri = `${c.env.APP_URL}/api/shopify/callback`;
+  // Derive redirect URI from actual request origin so it matches regardless of APP_URL env var
+  const redirectUri = new URL(c.req.url).origin + '/api/shopify/callback';
 
   // Generate a nonce for CSRF protection
   const nonce = crypto.randomUUID().replace(/-/g, '');
