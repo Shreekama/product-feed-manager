@@ -730,7 +730,12 @@ async function shopifyGraphql(
     }
 
     if (!res.ok) {
-      throw new Error(`Shopify GraphQL HTTP ${res.status}`);
+      let body = '';
+      try { body = await res.text(); } catch { /* ignore */ }
+      if (res.status === 401) {
+        throw new Error(`Shopify API 401 Unauthorized — token is invalid or lacks required scopes. Body: ${body}`);
+      }
+      throw new Error(`Shopify GraphQL HTTP ${res.status}: ${body}`);
     }
 
     const data = (await res.json()) as any;

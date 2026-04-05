@@ -223,6 +223,50 @@ shopifyRoutes.get('/callback', async (c) => {
   return c.redirect(`${webUrl}?shop=${shop}&installed=true`);
 });
 
+// ─── GET /test ────────────────────────────────────────────────────────────────
+// Quick token validation — calls the cheapest possible Shopify API query.
+
+shopifyRoutes.get('/test', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+  const db = getDb(c.env);
+
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { accessToken: true },
+  });
+
+  const token = store?.accessToken || c.env.SHOPIFY_STORE_TOKEN;
+  if (!token) {
+    return c.json({ ok: false, error: 'No token found. Set SHOPIFY_STORE_TOKEN in Cloudflare secrets.' }, 400);
+  }
+
+  const res = await fetch(
+    `https://${shopDomain}/admin/api/2024-04/graphql.json`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: '{ shop { name } }', variables: {} }),
+    },
+  );
+
+  const body = await res.text();
+  if (!res.ok) {
+    return c.json({ ok: false, status: res.status, body }, res.status as any);
+  }
+
+  let data: any;
+  try { data = JSON.parse(body); } catch { return c.json({ ok: false, error: 'Non-JSON response', body }); }
+
+  if (data.errors?.length) {
+    return c.json({ ok: false, errors: data.errors });
+  }
+
+  return c.json({ ok: true, shop: data.data?.shop?.name, tokenPrefix: token.slice(0, 8) + '…' });
+});
+
 // ─── GET /sync/status ─────────────────────────────────────────────────────────
 
 shopifyRoutes.get('/sync/status', async (c) => {
