@@ -21,6 +21,8 @@ function SyncCard() {
   const [syncData, setSyncData] = useState<any>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
+  const [testResult, setTestResult] = useState<{ ok: boolean; shop?: string; error?: string; status?: number } | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -38,6 +40,20 @@ function SyncCard() {
     const id = setInterval(fetchStatus, 3000);
     return () => clearInterval(id);
   }, [fetchStatus, syncData?.status]);
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`${API_URL}/shopify/test`);
+      const data = await res.json() as any;
+      setTestResult({ ok: data.ok, shop: data.shop, error: data.error || data.body, status: res.status });
+    } catch (e: any) {
+      setTestResult({ ok: false, error: e.message });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const startSync = async () => {
     setStarting(true);
@@ -135,7 +151,7 @@ function SyncCard() {
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={startSync}
           disabled={isSyncing || starting}
@@ -147,6 +163,14 @@ function SyncCard() {
           <RefreshCw className={clsx('w-4 h-4', (isSyncing || starting) && 'animate-spin')} />
           {isSyncing ? 'Syncing…' : starting ? 'Starting…' : 'Full Sync'}
         </button>
+        <button
+          onClick={testConnection}
+          disabled={testing}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+        >
+          <CheckCircle className={clsx('w-4 h-4', testing && 'animate-spin')} />
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
         {isDone && (
           <div className="flex items-center gap-1.5 text-green-600 text-sm">
             <CheckCircle className="w-4 h-4" />
@@ -154,6 +178,17 @@ function SyncCard() {
           </div>
         )}
       </div>
+      {testResult && (
+        <div className={clsx(
+          'text-sm rounded-lg px-3 py-2 flex items-start gap-2',
+          testResult.ok ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200',
+        )}>
+          {testResult.ok
+            ? <><CheckCircle className="w-4 h-4 mt-0.5 shrink-0" /> Connected to <strong>{testResult.shop}</strong></>
+            : <><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {testResult.status === 401 ? 'Invalid token (401) — token lacks required scopes or is not an offline access token' : testResult.error}</>
+          }
+        </div>
+      )}
 
       <style>{`@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } }`}</style>
     </div>
