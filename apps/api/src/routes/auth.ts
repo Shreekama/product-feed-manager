@@ -37,8 +37,11 @@ authRoutes.post('/callback', async (c) => {
     return c.json({ error: 'Missing code or codeVerifier' }, 400);
   }
 
-  // Redirect URI must exactly match what was sent to Microsoft
-  const redirectUri = new URL('/', c.env.WEB_URL || 'http://localhost:3000').toString();
+  // Redirect URI must exactly match what was sent to Microsoft.
+  // Derive from the incoming request origin so it always matches,
+  // regardless of whether WEB_URL is set.
+  const requestOrigin = new URL(c.req.url).origin;
+  const redirectUri = `${requestOrigin}/`;
 
   const tokenRes = await fetch(
     `${ENTRA_BASE}/${c.env.ENTRA_TENANT_ID}/oauth2/v2.0/token`,

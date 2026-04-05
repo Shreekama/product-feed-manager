@@ -89,7 +89,10 @@ function AuthOverlayInner({ onAuth }: { onAuth: (user: User) => void }) {
             onAuth(data.user);
           } else {
             setState({ checking: false, authenticated: false, user: null });
-            setError(data.error || 'Authentication failed. Please try again.');
+            const msg = data.detail
+              ? `${data.error}: ${data.detail}`
+              : (data.error || 'Authentication failed. Please try again.');
+            setError(msg);
           }
         })
         .catch(() => {
