@@ -22,6 +22,54 @@ const SCOPES = [
   'read_locations',
 ].join(',');
 
+// ─── POST /bootstrap ─────────────────────────────────────────────────────────
+// One-time endpoint to register the store when bypassing the OAuth flow.
+// Pass the Shopify access token in the body, or set SHOPIFY_STORE_TOKEN env var.
+// Visit once: POST /api/shopify/bootstrap  (body optional if env var is set)
+
+shopifyRoutes.post('/bootstrap', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+
+  let accessToken: string | undefined;
+  try {
+    const body = await c.req.json<{ accessToken?: string }>();
+    accessToken = body.accessToken;
+  } catch { /* body is optional */ }
+
+  // Fall back to env var if not provided in body
+  accessToken = accessToken || c.env.SHOPIFY_STORE_TOKEN;
+
+  if (!accessToken) {
+    return c.json({
+      error: 'No access token provided. Pass { "accessToken": "shpat_..." } in the body, or set SHOPIFY_STORE_TOKEN in your Worker environment variables.',
+    }, 400);
+  }
+
+  const db = getDb(c.env);
+  const existing = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { id: true },
+  });
+
+  if (existing) {
+    // Update the access token
+    await db.update(stores)
+      .set({ accessToken, updatedAt: new Date().toISOString() })
+      .where(eq(stores.id, existing.id));
+    return c.json({ ok: true, message: `Store ${shopDomain} updated.`, storeId: existing.id });
+  }
+
+  const storeId = crypto.randomUUID();
+  await db.insert(stores).values({
+    id: storeId,
+    shopDomain,
+    accessToken,
+    syncStatus: 'IDLE',
+  });
+
+  return c.json({ ok: true, message: `Store ${shopDomain} registered. You can now trigger a sync.`, storeId });
+});
+
 // ─── GET /install ─────────────────────────────────────────────────────────────
 
 shopifyRoutes.get('/install', (c) => {
