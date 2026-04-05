@@ -1,9 +1,15 @@
 import type { Env } from '../types';
 import { getDb } from '../db';
-import { stores, products, variants, inventoryLevels, metafields, feedRuns, feedSchedules } from '../db/schema';
+import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns, feedSchedules } from '../db/schema';
 import { eq } from 'drizzle-orm';
-import { resolveForSkus } from '../services/media';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
+
+/** Strip everything from '?' onwards in a Shopify CDN URL */
+function stripQuery(url: string | null | undefined): string {
+  if (!url) return '';
+  const q = url.indexOf('?');
+  return q !== -1 ? url.slice(0, q) : url;
+}
 import { generateCsv } from '../generators/csv';
 import { generateXml } from '../generators/xml';
 import { generateSheets } from '../generators/sheets';
@@ -97,11 +103,19 @@ async function submitBulkOperation(
             edges {
               node {
                 id title vendor productType handle status tags bodyHtml publishedAt
+                images {
+                  edges {
+                    node {
+                      id url altText width height
+                    }
+                  }
+                }
                 variants {
                   edges {
                     node {
                       id sku title price compareAtPrice weight weightUnit barcode
                       taxable requiresShipping position
+                      image { url altText }
                       selectedOptions { name value }
                       inventoryItem {
                         id
@@ -182,6 +196,7 @@ async function processJsonlStream(
   const variantBuffer: Array<{ raw: any; parentShopifyId: string }> = [];
   const inventoryBuffer: any[] = [];
   const metafieldBuffer: any[] = [];
+  const imageBuffer: any[] = []; // product images
 
   const productMap = new Map<string, string>(); // shopifyProductId → dbId
   let totalProcessed = 0;
@@ -221,6 +236,9 @@ async function processJsonlStream(
         inventoryBuffer.push(node);
       } else if (node.namespace !== undefined && node.__parentId) {
         metafieldBuffer.push(node);
+      } else if (node.url !== undefined && node.__parentId) {
+        // Product image node
+        imageBuffer.push(node);
       }
 
       if (productBuffer.length >= BATCH_SIZE) {
@@ -249,6 +267,7 @@ async function processJsonlStream(
 
   await upsertVariantBatch(variantBuffer, storeId, productMap, inventoryBuffer, db);
   await upsertMetafieldBatch(metafieldBuffer, productMap, db);
+  await upsertImageBatch(imageBuffer, productMap, db);
   return totalProcessed;
 }
 
@@ -335,6 +354,7 @@ async function upsertVariantBatch(
       option1: opts[0]?.value || null,
       option2: opts[1]?.value || null,
       option3: opts[2]?.value || null,
+      imageSrc: stripQuery(raw.image?.url) || null,
       updatedAt: new Date().toISOString(),
     };
 
@@ -377,6 +397,54 @@ async function upsertVariantBatch(
             available: level.available || 0,
           });
         }
+      }
+    }
+  }
+}
+
+async function upsertImageBatch(
+  imageNodes: any[],
+  productMap: Map<string, string>,
+  db: any,
+): Promise<void> {
+  // Group by product so we can assign position
+  const byProduct = new Map<string, any[]>();
+  for (const img of imageNodes) {
+    const pid = img.__parentId;
+    if (!byProduct.has(pid)) byProduct.set(pid, []);
+    byProduct.get(pid)!.push(img);
+  }
+
+  for (const [shopifyProductId, images] of byProduct) {
+    const productId = productMap.get(shopifyProductId);
+    if (!productId) continue;
+
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const src = stripQuery(img.url);
+      if (!src) continue;
+
+      const existing = await db.query.productImages.findFirst({
+        where: (pi: any, { and: a, eq: e }: any) =>
+          a(e(pi.shopifyId, img.id), e(pi.productId, productId)),
+        columns: { id: true },
+      });
+
+      if (existing) {
+        await db.update(productImages)
+          .set({ src, altText: img.altText || null, width: img.width || null, height: img.height || null, position: i + 1 })
+          .where(eq(productImages.id, existing.id));
+      } else {
+        await db.insert(productImages).values({
+          id: crypto.randomUUID(),
+          productId,
+          shopifyId: img.id,
+          src,
+          altText: img.altText || null,
+          width: img.width || null,
+          height: img.height || null,
+          position: i + 1,
+        });
       }
     }
   }
@@ -477,6 +545,7 @@ async function handleFeedJob(
           with: {
             metafields: true,
             collections: { with: { collection: true } },
+            images: { orderBy: (img: any, { asc }: any) => [asc(img.position)] },
           },
           where: (p: any, { and: a, eq: e }: any) =>
             a(e(p.storeId, storeId), e(p.status, 'active'), e(p.excludeFromFeeds, false)),
@@ -492,9 +561,8 @@ async function handleFeedJob(
     // Apply filter rules
     const filtered = applyFilters(activeVariants, filterRules);
 
-    // Pre-fetch media for all SKUs
-    const skus = filtered.map((v) => v.sku).filter((s): s is string => Boolean(s));
-    const mediaMap = await resolveForSkus(skus, env, 10);
+    // Images come directly from DB (Shopify CDN URLs, query params already stripped)
+    const mediaMap = new Map<string, any>();
 
     // Map each variant to a feed row
     const headers = columnMappings.map((m) => m.feedColumn);
