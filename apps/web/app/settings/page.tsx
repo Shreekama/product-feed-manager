@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package } from 'lucide-react';
+import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, ShieldCheck } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { clsx } from 'clsx';
 
@@ -18,11 +18,9 @@ const PHASE_CONFIG: Record<string, { label: string; pct: number; pulse: boolean 
 };
 
 function SyncCard() {
-  const [syncData, setSyncData] = useState<any>(null);
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState('');
-  const [testResult, setTestResult] = useState<{ ok: boolean; shop?: string; error?: string; status?: number } | null>(null);
-  const [testing, setTesting] = useState(false);
+  const [syncData, setSyncData]   = useState<any>(null);
+  const [starting, setStarting]   = useState(false);
+  const [syncError, setSyncError] = useState('');
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -31,9 +29,7 @@ function SyncCard() {
     } catch { /* silent */ }
   }, []);
 
-  useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
   useEffect(() => {
     if (syncData?.status !== 'SYNCING') return;
@@ -41,29 +37,15 @@ function SyncCard() {
     return () => clearInterval(id);
   }, [fetchStatus, syncData?.status]);
 
-  const testConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const res = await fetch(`${API_URL}/shopify/test`);
-      const data = await res.json() as any;
-      setTestResult({ ok: data.ok, shop: data.shop, error: data.error || data.body, status: res.status });
-    } catch (e: any) {
-      setTestResult({ ok: false, error: e.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
   const startSync = async () => {
     setStarting(true);
-    setError('');
+    setSyncError('');
     try {
       const res = await fetch(`${API_URL}/shopify/sync`, { method: 'POST' });
       if (!res.ok) throw new Error((await res.json() as any).error || 'Failed');
       await fetchStatus();
     } catch (e: any) {
-      setError(e.message);
+      setSyncError(e.message);
     } finally {
       setStarting(false);
     }
@@ -79,23 +61,44 @@ function SyncCard() {
   const pct       = cfg?.pct ?? 0;
   const processed = progress?.processed ?? 0;
 
-  // ── Token not set in Cloudflare ───────────────────────────────────────────
-  if (status === 'NOT_CONFIGURED') {
+  // ── Needs OAuth authorization ─────────────────────────────────────────────
+  // Status is NOT_CONNECTED when: stores table is empty AND SHOPIFY_STORE_TOKEN
+  // env var is not set. This means the OAuth callback never completed successfully.
+  // Clicking Authorize triggers the OAuth flow using SHOPIFY_API_KEY + SHOPIFY_API_SECRET.
+  if (!syncData || status === 'NOT_CONNECTED' || status === 'NOT_CONFIGURED') {
+    const authorizeUrl = `${API_URL}/shopify/install?shop=${SHOP_DOMAIN}`;
     return (
-      <div className="bg-white rounded-xl border border-amber-200 p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-          <h2 className="font-medium text-gray-700">SHOPIFY_STORE_TOKEN not set</h2>
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-medium text-gray-700">Product Sync</h2>
+          <span className="text-xs text-gray-400 font-mono">{SHOP_DOMAIN}</span>
         </div>
-        <p className="text-sm text-gray-500">
-          Add <code className="bg-gray-100 px-1 rounded text-xs font-mono">SHOPIFY_STORE_TOKEN</code> as a secret in your Cloudflare Worker environment.
-          You can find the access token in your Shopify Partner dashboard under the app's API credentials.
-        </p>
+
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-amber-800">Authorization required</p>
+            <p className="text-xs text-amber-700">
+              The app is installed on your store but hasn't received an access token yet.
+              Click <strong>Authorize</strong> to complete the OAuth flow — you'll be redirected to Shopify
+              briefly, then returned here automatically.
+            </p>
+          </div>
+        </div>
+
+        <a
+          href={authorizeUrl}
+          className="inline-flex items-center gap-2 bg-[#008060] hover:bg-[#006e52] text-white px-5 py-2.5 rounded-md text-sm font-medium transition-colors"
+        >
+          <ShieldCheck className="w-4 h-4" />
+          Authorize with Shopify
+          <ExternalLink className="w-3 h-3 opacity-70" />
+        </a>
       </div>
     );
   }
 
-  // ── Connected — show sync controls ────────────────────────────────────────
+  // ── Authorized — show sync controls ──────────────────────────────────────
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <div className="flex items-center justify-between">
@@ -127,7 +130,7 @@ function SyncCard() {
             </span>
             {!isFailed && <span>{pct}%</span>}
           </div>
-          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden relative">
             {isFailed ? (
               <div className="h-full w-full bg-red-400 rounded-full" />
             ) : (
@@ -136,7 +139,7 @@ function SyncCard() {
                 style={{ width: `${pct}%` }}
               >
                 {cfg?.pulse && (
-                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent" style={{ animation: 'shimmer 1.5s infinite' }} />
+                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
                 )}
               </div>
             )}
@@ -144,32 +147,26 @@ function SyncCard() {
         </div>
       )}
 
-      {error && (
+      {syncError && (
         <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
-          {error}
+          {syncError}
         </div>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-3">
         <button
           onClick={startSync}
           disabled={isSyncing || starting}
           className={clsx(
             'inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-            isSyncing || starting ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700 text-white',
+            isSyncing || starting
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-brand-600 hover:bg-brand-700 text-white',
           )}
         >
           <RefreshCw className={clsx('w-4 h-4', (isSyncing || starting) && 'animate-spin')} />
           {isSyncing ? 'Syncing…' : starting ? 'Starting…' : 'Full Sync'}
-        </button>
-        <button
-          onClick={testConnection}
-          disabled={testing}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
-        >
-          <CheckCircle className={clsx('w-4 h-4', testing && 'animate-spin')} />
-          {testing ? 'Testing…' : 'Test Connection'}
         </button>
         {isDone && (
           <div className="flex items-center gap-1.5 text-green-600 text-sm">
@@ -178,30 +175,27 @@ function SyncCard() {
           </div>
         )}
       </div>
-      {testResult && (
-        <div className={clsx(
-          'text-sm rounded-lg px-3 py-2 flex items-start gap-2',
-          testResult.ok ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200',
-        )}>
-          {testResult.ok
-            ? <><CheckCircle className="w-4 h-4 mt-0.5 shrink-0" /> Connected to <strong>{testResult.shop}</strong></>
-            : <><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {testResult.status === 401 ? 'Invalid token (401) — token lacks required scopes or is not an offline access token' : testResult.error}</>
-          }
-        </div>
-      )}
 
-      <style>{`@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } }`}</style>
+      <style>{`@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } } .animate-shimmer { animation: shimmer 1.5s infinite; }`}</style>
     </div>
   );
 }
 
 function SettingsInner() {
-  const params = useSearchParams();
+  const params         = useSearchParams();
   const googleConnected = params.get('google_connected') === 'true';
+  const installed       = params.get('installed') === 'true';
 
   return (
     <div className="max-w-2xl space-y-6">
       <h1 className="text-xl font-semibold">Settings</h1>
+
+      {installed && (
+        <div className="flex items-center gap-2 text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm">
+          <CheckCircle className="w-4 h-4 shrink-0" />
+          Shopify authorized successfully — you can now run a full sync.
+        </div>
+      )}
 
       <SyncCard />
 

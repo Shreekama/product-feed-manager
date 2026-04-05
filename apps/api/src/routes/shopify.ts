@@ -296,14 +296,7 @@ shopifyRoutes.get('/sync/status', async (c) => {
   });
 
   if (!store) {
-    // Return NOT_CONFIGURED only if the token env var is also missing
-    const hasToken = !!c.env.SHOPIFY_STORE_TOKEN;
-    return c.json({
-      status: hasToken ? 'IDLE' : 'NOT_CONFIGURED',
-      lastSyncAt: null,
-      productCount: 0,
-      progress: null,
-    });
+    return c.json({ status: 'NOT_CONNECTED', lastSyncAt: null, productCount: 0, progress: null });
   }
 
   const [progress, countRow] = await Promise.all([
@@ -331,23 +324,10 @@ shopifyRoutes.post('/sync', async (c) => {
     columns: { id: true, accessToken: true, syncStatus: true },
   });
 
-  // Auto-bootstrap: if app is already installed but store record doesn't exist yet,
-  // create it from SHOPIFY_STORE_TOKEN env var (set this in Cloudflare secrets).
   if (!store) {
-    const token = c.env.SHOPIFY_STORE_TOKEN;
-    if (!token) {
-      return c.json({
-        error: 'Store not registered. Set SHOPIFY_STORE_TOKEN in Cloudflare Worker secrets.',
-      }, 404);
-    }
-    const storeId = crypto.randomUUID();
-    await db.insert(stores).values({
-      id: storeId,
-      shopDomain,
-      accessToken: token,
-      syncStatus: 'IDLE',
-    });
-    store = { id: storeId, accessToken: token, syncStatus: 'IDLE' };
+    return c.json({
+      error: 'Not authorized. Click "Authorize with Shopify" in Settings to complete the OAuth flow.',
+    }, 401);
   }
 
   if (store.syncStatus === 'SYNCING') {
