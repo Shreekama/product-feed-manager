@@ -1,46 +1,44 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import {
-  resolveForSku,
-  buildImageUrl,
-  buildVideoUrl,
-  deriveBaseSku,
-} from '../services/media';
+import { getDb } from '../db';
+import { deriveBaseSku } from '../services/media';
 
 export const mediaRoutes = new Hono<{ Bindings: Env }>();
 
 // ─── GET /resolve?sku= ────────────────────────────────────────────────────────
+// Returns Shopify CDN image URLs for a variant SKU (query params already stripped).
 
 mediaRoutes.get('/resolve', async (c) => {
   const sku = c.req.query('sku');
   if (!sku) return c.json({ error: 'Missing sku parameter' }, 400);
 
-  const result = await resolveForSku(sku, c.env);
-  return c.json(result);
-});
+  const db = getDb(c.env);
 
-// ─── GET /preview-urls?sku=&count= ────────────────────────────────────────────
-// Generate URLs without probing CDN
+  // Find the variant by SKU
+  const variant = await db.query.variants.findFirst({
+    where: (v, { eq }) => eq(v.sku, sku),
+    columns: { id: true, sku: true, imageSrc: true, productId: true },
+  });
 
-mediaRoutes.get('/preview-urls', (c) => {
-  const sku = c.req.query('sku');
-  if (!sku) return c.json({ error: 'Missing sku parameter' }, 400);
-
-  const count = Math.min(parseInt(c.req.query('count') || '5', 10), 20);
-  const baseUrl = c.env.MEDIA_BASE_URL || 'https://cdn.example.com/media';
-
-  const baseSku = deriveBaseSku(sku);
-  if (!baseSku) return c.json({ error: 'Invalid SKU' }, 400);
-
-  const images: string[] = [];
-  const videos: string[] = [];
-
-  for (let i = 1; i <= count; i++) {
-    images.push(buildImageUrl(baseSku, i, baseUrl));
-    if (i <= 5) {
-      videos.push(buildVideoUrl(baseSku, i, baseUrl));
-    }
+  if (!variant) {
+    return c.json({ sku, baseSku: deriveBaseSku(sku), images: [], primaryImage: null });
   }
 
-  return c.json({ baseSku, images, videos });
+  // Fetch all product images sorted by position
+  const productImgs = await db.query.productImages.findMany({
+    where: (pi, { eq }) => eq(pi.productId, variant.productId),
+    orderBy: (pi, { asc }) => [asc(pi.position)],
+    columns: { src: true, altText: true, width: true, height: true, position: true },
+  });
+
+  const images = productImgs.map((img) => img.src);
+  const primaryImage = variant.imageSrc || images[0] || null;
+
+  return c.json({
+    sku,
+    baseSku: deriveBaseSku(sku),
+    primaryImage,
+    images,
+    imageDetails: productImgs,
+  });
 });
