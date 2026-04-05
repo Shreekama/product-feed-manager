@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  SHREEKAMA — Login Screen Reference Design                       ║
+  ║                                                                  ║
+  ║  HOW TO USE (tell Claude Code):                                  ║
+  ║  "Implement a login screen for this app using the design in      ║
+  ║   _login-reference.html. The app name is [YOUR APP NAME].        ║
+  ║   Keep all visual styling identical. Wire up Microsoft Entra ID  ║
+  ║   PKCE OAuth with client ID [X] and tenant ID [Y]."             ║
+  ║                                                                  ║
+  ║  VARIABLES TO SWAP PER APP:                                      ║
+  ║  - APP_NAME  → The h1 text (e.g. "Listing Generator")           ║
+  ║  - PAGE_TITLE → <title> tag text                                 ║
+  ║  - ENTRA_CLIENT_ID / ENTRA_TENANT_ID → env vars on your server  ║
+  ╚══════════════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shreekama · [APP_NAME]</title>
+
+  <!-- Favicon: purple S -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23631664'/><text x='16' y='24' text-anchor='middle' font-family='Georgia,serif' font-size='22' font-weight='600' fill='%23C9A84C'>S</text></svg>" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────────── */
+    :root {
+      --brand:        #4a0e4c;
+      --bg-grad-a:    #631664;
+      --bg-grad-b:    #8e4ba8;
+      --gold:         #f5a300;
+      --white:        #ffffff;
+      --white-90:     rgba(255,255,255,0.90);
+      --white-70:     rgba(255,255,255,0.70);
+      --white-50:     rgba(255,255,255,0.50);
+      --err:          #e85555;
+      --err-bg:       rgba(232,85,85,0.12);
+
+      --r-sm:  8px;
+      --r-md:  12px;
+      --r-xl:  24px;
+
+      --font-display: 'Cormorant Garamond', Georgia, serif;
+      --font-body:    'DM Sans', system-ui, sans-serif;
+
+      --ease:  cubic-bezier(0.4, 0, 0.2, 1);
+      --t-fast: 0.15s var(--ease);
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-body); }
+
+    /* ── Auth Overlay (full-screen login wall) ─────────────────── */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      /* Dot-grid + purple radial gradient background */
+      background:
+        radial-gradient(ellipse at 30% 50%, rgba(255,255,255,0.07) 0%, transparent 60%),
+        radial-gradient(circle, rgba(255,255,255,0.10) 1px, transparent 1px),
+        linear-gradient(135deg, var(--bg-grad-a) 0%, var(--bg-grad-b) 100%);
+      background-size: auto, 26px 26px, 100% 100%;
+    }
+
+    /* ── Auth Card (glassmorphism) ─────────────────────────────── */
+    .auth-card {
+      background: rgba(25, 0, 30, 0.78);
+      backdrop-filter: blur(40px);
+      -webkit-backdrop-filter: blur(40px);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: var(--r-xl);
+      box-shadow:
+        0 24px 80px rgba(0,0,0,0.50),
+        inset 0 0 0 1px rgba(255,255,255,0.06);
+      padding: 48px 44px;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      animation: fadeUp 0.6s var(--ease) both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* ── Logo ──────────────────────────────────────────────────── */
+    .auth-logo        { margin-bottom: 28px; }
+    .auth-logo-img    {
+      display: block;
+      width: 160px;
+      height: auto;
+      margin: 0 auto;
+      object-fit: contain;
+      filter: brightness(1.1);
+    }
+
+    /* ── App Name Headline ─────────────────────────────────────── */
+    .auth-headline {
+      font-family: var(--font-display);
+      font-size: 32px;
+      font-weight: 300;
+      line-height: 1.2;
+      color: var(--white);
+      margin-bottom: 12px;
+    }
+
+    /* ── Subtext ───────────────────────────────────────────────── */
+    .auth-body {
+      font-size: 15px;
+      font-weight: 300;
+      color: var(--white-70);
+      margin-bottom: 28px;
+    }
+
+    /* ── Microsoft Login Button ────────────────────────────────── */
+    .ms-login-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 13px 24px;
+      background: #ffffff;
+      color: #1e1e1e;
+      border: none;
+      border-radius: var(--r-md);
+      font-family: var(--font-body);
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.30);
+      transition: var(--t-fast);
+    }
+    .ms-login-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .ms-login-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* ── Error Message ─────────────────────────────────────────── */
+    .auth-error {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--err-bg);
+      border: 1px solid rgba(232,85,85,0.25);
+      border-radius: var(--r-sm);
+      color: #ff9999;
+      font-size: 13px;
+      text-align: left;
+    }
+    .auth-error.hidden { display: none; }
+
+    /* ── Footer Hint ───────────────────────────────────────────── */
+    .auth-hint {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--white-50);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════
+       LOGIN SCREEN
+       Replace [APP_NAME] with your application name.
+       Wire initiateLogin() to your Microsoft Entra ID PKCE flow.
+  ════════════════════════════════════════════════════════════ -->
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+
+      <!-- Permanent Shreekama logo — do not change -->
+      <div class="auth-logo">
+        <img
+          src="https://www.shreekama.com/cdn/shop/files/Shreekama_logo_Light.png"
+          alt="Shreekama"
+          class="auth-logo-img"
+        />
+      </div>
+
+      <!-- ↓ VARIABLE: change this to your app name -->
+      <h1 class="auth-headline">[APP_NAME]</h1>
+
+      <p class="auth-body">Sign in with your Microsoft account to continue.</p>
+
+      <!-- Microsoft login button — always Microsoft, do not change provider -->
+      <button id="ms-login-btn" class="ms-login-btn" onclick="initiateLogin()">
+        <!-- Microsoft Windows logo (exact 4-colour squares) -->
+        <svg width="20" height="20" viewBox="0 0 21 21" fill="none" aria-hidden="true">
+          <rect x="1"  y="1"  width="9" height="9" fill="#F25022"/>
+          <rect x="11" y="1"  width="9" height="9" fill="#7FBA00"/>
+          <rect x="1"  y="11" width="9" height="9" fill="#00A4EF"/>
+          <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+        </svg>
+        <span id="ms-login-label">Continue with Microsoft</span>
+      </button>
+
+      <p id="auth-error" class="auth-error hidden"></p>
+
+      <p class="auth-hint">Protected by Microsoft Entra ID</p>
+
+    </div>
+  </div>
+
+  <!--
+  ═══════════════════════════════════════════════════════════════
+  AUTH LOGIC — PKCE OAuth 2.0 with Microsoft Entra ID
+  ───────────────────────────────────────────────────────────────
+  Required server endpoints (Cloudflare Workers / any backend):
+
+    GET  /api/auth/config    → { clientId, tenantId, authUrl }
+    POST /api/auth/callback  → { token, user, expiresIn }
+    GET  /api/auth/status    → { authenticated, user }
+    POST /api/auth/logout    → clears HttpOnly cookie
+
+  The server reads ENTRA_CLIENT_ID, ENTRA_TENANT_ID, ENTRA_CLIENT_SECRET
+  from environment variables — never expose the secret to the client.
+  ═══════════════════════════════════════════════════════════════
+  -->
+  <script>
+  'use strict';
+
+  async function initiateLogin() {
+    const btn   = document.getElementById('ms-login-btn');
+    const label = document.getElementById('ms-login-label');
+    const err   = document.getElementById('auth-error');
+
+    btn.disabled     = true;
+    label.textContent = 'Redirecting\u2026';
+    err.classList.add('hidden');
+
+    try {
+      // 1. Fetch safe OAuth params from your server (no secrets sent to client)
+      const res    = await fetch('/api/auth/config');
+      if (!res.ok) throw new Error('Auth service unavailable');
+      const config = await res.json();
+
+      if (!config.clientId || !config.tenantId) {
+        throw new Error('Auth not configured — set ENTRA_CLIENT_ID and ENTRA_TENANT_ID.');
+      }
+
+      // 2. Generate PKCE verifier + challenge
+      const verifier  = _genVerifier();
+      const challenge = await _genChallenge(verifier);
+      const state     = _genState();
+
+      sessionStorage.setItem('sk_code_verifier', verifier);
+      sessionStorage.setItem('sk_oauth_state',   state);
+
+      // 3. Redirect to Microsoft login
+      const redirect = encodeURIComponent(location.origin + '/');
+      window.location.href =
+        `${config.authUrl}/${config.tenantId}/oauth2/v2.0/authorize` +
+        `?client_id=${config.clientId}` +
+        `&response_type=code` +
+        `&redirect_uri=${redirect}` +
+        `&response_mode=query` +
+        `&scope=openid%20profile%20email` +
+        `&state=${state}` +
+        `&code_challenge=${challenge}` +
+        `&code_challenge_method=S256`;
+
+    } catch (e) {
+      err.textContent = e.message;
+      err.classList.remove('hidden');
+      btn.disabled      = false;
+      label.textContent = 'Continue with Microsoft';
+    }
+  }
+
+  async function handleOAuthCallback() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('code')) return false;
+
+    const code         = params.get('code');
+    const state        = params.get('state');
+    const storedState  = sessionStorage.getItem('sk_oauth_state');
+    const codeVerifier = sessionStorage.getItem('sk_code_verifier');
+
+    history.replaceState({}, '', location.pathname);
+    sessionStorage.removeItem('sk_oauth_state');
+    sessionStorage.removeItem('sk_code_verifier');
+
+    if (state !== storedState) { console.error('OAuth state mismatch'); return false; }
+
+    const res  = await fetch('/api/auth/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, codeVerifier }),
+    });
+    return res.ok;
+  }
+
+  // ── PKCE Helpers ──────────────────────────────────────────────
+  function _genVerifier() {
+    const a = new Uint8Array(32);
+    crypto.getRandomValues(a);
+    return btoa(String.fromCharCode(...a))
+      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  }
+  async function _genChallenge(v) {
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v));
+    return btoa(String.fromCharCode(...new Uint8Array(h)))
+      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  }
+  function _genState() {
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return Array.from(a, b => b.toString(16).padStart(2,'0')).join('');
+  }
+  </script>
+
+</body>
+</html>
