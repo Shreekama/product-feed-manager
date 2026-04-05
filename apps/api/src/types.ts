@@ -7,6 +7,7 @@ export interface Env {
   // Shopify
   SHOPIFY_API_KEY: string;
   SHOPIFY_API_SECRET: string;
+  SHOPIFY_STORE_TOKEN: string; // Access token for d7f63b.myshopify.com (bypasses OAuth)
   APP_URL: string;
   WEB_URL: string;
   // Google Sheets
