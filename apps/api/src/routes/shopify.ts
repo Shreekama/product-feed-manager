@@ -99,19 +99,26 @@ shopifyRoutes.get('/callback', async (c) => {
   const shop = c.req.query('shop');
   const code = c.req.query('code');
   const hmac = c.req.query('hmac');
-  const allParams = c.req.query();
 
   if (!shop || !code || !hmac) {
-    return c.text('Missing required OAuth parameters', 400);
+    return c.json({ error: 'Missing required OAuth parameters', params: { shop: !!shop, code: !!code, hmac: !!hmac } }, 400);
   }
 
-  // Validate HMAC
+  // Validate HMAC — key must be API secret, not API key
   const secret = c.env.SHOPIFY_API_SECRET;
-  const { hmac: _hmac, ...rest } = allParams;
-  const message = Object.keys(rest)
-    .sort()
-    .map((k) => `${k}=${rest[k]}`)
-    .join('&');
+  if (!secret) {
+    console.error('[shopify/callback] SHOPIFY_API_SECRET is not set in Worker secrets');
+    return c.json({ error: 'SHOPIFY_API_SECRET not configured' }, 500);
+  }
+
+  // Build message: all params except hmac, sorted alphabetically, joined as key=value&...
+  // Use the raw query string to avoid any URL-decoding inconsistencies
+  const rawSearch = new URL(c.req.url).search.slice(1); // strip leading '?'
+  const rawPairs = rawSearch.split('&');
+  const filteredPairs = rawPairs
+    .filter(pair => !pair.startsWith('hmac='))
+    .sort();
+  const message = filteredPairs.join('&');
 
   const key = await crypto.subtle.importKey(
     'raw',
@@ -125,11 +132,16 @@ shopifyRoutes.get('/callback', async (c) => {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
+  console.log(`[shopify/callback] HMAC check — computed:${computed.slice(0,8)}… received:${hmac.slice(0,8)}… message:${message.slice(0,120)}`);
+
   if (computed !== hmac) {
-    return c.text('Invalid HMAC', 401);
+    return c.json({
+      error: 'Invalid HMAC — SHOPIFY_API_SECRET may be wrong or token copied with whitespace',
+      hint: `computed starts with: ${computed.slice(0, 8)}, received starts with: ${hmac.slice(0, 8)}`,
+    }, 401);
   }
 
-  // Exchange code for access token
+  // Exchange code for access token (offline token → shpss_...)
   const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -141,12 +153,17 @@ shopifyRoutes.get('/callback', async (c) => {
   });
 
   if (!tokenRes.ok) {
-    return c.text('Token exchange failed', 400);
+    const body = await tokenRes.text();
+    console.error(`[shopify/callback] Token exchange failed ${tokenRes.status}: ${body}`);
+    return c.json({ error: `Token exchange failed (${tokenRes.status})`, detail: body }, 400);
   }
 
   const tokenData = (await tokenRes.json()) as any;
   const accessToken: string = tokenData.access_token;
-  if (!accessToken) return c.text('Token exchange failed', 400);
+  if (!accessToken) {
+    return c.json({ error: 'Token exchange returned no access_token', detail: tokenData }, 400);
+  }
+  console.log(`[shopify/callback] Got access token for ${shop}: ${accessToken.slice(0, 8)}…`);
 
   // Upsert store
   const db = getDb(c.env);
@@ -171,7 +188,7 @@ shopifyRoutes.get('/callback', async (c) => {
   }
 
   // Register webhooks
-  const appUrl = c.env.APP_URL;
+  const appUrl = new URL(c.req.url).origin;
   for (const topic of REQUIRED_WEBHOOKS) {
     try {
       const address = `${appUrl}/api/webhooks/${topic.replace('/', '-').replace('_', '-')}`;
