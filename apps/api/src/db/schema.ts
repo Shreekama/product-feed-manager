@@ -70,6 +70,35 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   variants: many(variants),
   metafields: many(metafields),
   collections: many(productCollections),
+  images: many(productImages),
+}));
+
+// ─── Product Images ───────────────────────────────────────────────────────────
+
+export const productImages = sqliteTable(
+  'product_images',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    shopifyId: text('shopify_id').notNull(),
+    src: text('src').notNull(), // Shopify CDN URL, query params stripped
+    altText: text('alt_text'),
+    width: integer('width'),
+    height: integer('height'),
+    position: integer('position').notNull().default(1),
+    createdAt: text('created_at').notNull().default("(datetime('now'))"),
+  },
+  (t) => ({
+    productIdx: index('product_images_product_idx').on(t.productId),
+    shopifyUniqueIdx: uniqueIndex('product_images_shopify_product_unique').on(t.shopifyId, t.productId),
+    positionIdx: index('product_images_position_idx').on(t.productId, t.position),
+  }),
+);
+
+export const productImagesRelations = relations(productImages, ({ one }) => ({
+  product: one(products, { fields: [productImages.productId], references: [products.id] }),
 }));
 
 // ─── Variants ─────────────────────────────────────────────────────────────────
@@ -98,6 +127,7 @@ export const variants = sqliteTable(
     option1: text('option1'),
     option2: text('option2'),
     option3: text('option3'),
+    imageSrc: text('image_src'),       // variant-specific image URL (Shopify CDN, no query params)
     mediaCache: text('media_cache'), // JSON
     mediaCachedAt: text('media_cached_at'),
     createdAt: text('created_at').notNull().default("(datetime('now'))"),

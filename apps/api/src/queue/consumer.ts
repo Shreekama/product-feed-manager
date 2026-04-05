@@ -1,9 +1,15 @@
 import type { Env } from '../types';
 import { getDb } from '../db';
-import { stores, products, variants, inventoryLevels, metafields, feedRuns, feedSchedules } from '../db/schema';
+import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns, feedSchedules } from '../db/schema';
 import { eq } from 'drizzle-orm';
-import { resolveForSkus } from '../services/media';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
+
+/** Strip everything from '?' onwards in a Shopify CDN URL */
+function stripQuery(url: string | null | undefined): string {
+  if (!url) return '';
+  const q = url.indexOf('?');
+  return q !== -1 ? url.slice(0, q) : url;
+}
 import { generateCsv } from '../generators/csv';
 import { generateXml } from '../generators/xml';
 import { generateSheets } from '../generators/sheets';
@@ -31,40 +37,55 @@ export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
 
 // ─── Bulk Sync Handler ────────────────────────────────────────────────────────
 
+const PROGRESS_TTL = 3600; // 1 hour
+
+async function setProgress(env: Env, shopDomain: string, data: object) {
+  await env.MEDIA_KV.put(
+    `sync_progress:${shopDomain}`,
+    JSON.stringify({ ...data, updatedAt: new Date().toISOString() }),
+    { expirationTtl: PROGRESS_TTL },
+  );
+}
+
 async function handleBulkSync(
   data: { shopDomain: string; accessToken: string; storeId: string },
   env: Env,
 ): Promise<void> {
   const { shopDomain, accessToken, storeId } = data;
   const db = getDb(env);
+  const startedAt = new Date().toISOString();
 
   console.log(`[${shopDomain}] Starting bulk sync`);
 
-  // Mark store as syncing
-  await db
-    .update(stores)
-    .set({ syncStatus: 'SYNCING', updatedAt: new Date().toISOString() })
-    .where(eq(stores.id, storeId));
+  await Promise.all([
+    db.update(stores).set({ syncStatus: 'SYNCING', updatedAt: startedAt }).where(eq(stores.id, storeId)),
+    setProgress(env, shopDomain, { phase: 'submitting', processed: 0, startedAt }),
+  ]);
 
   try {
     const operationId = await submitBulkOperation(shopDomain, accessToken);
+    await setProgress(env, shopDomain, { phase: 'waiting', processed: 0, startedAt });
+
     const downloadUrl = await pollBulkOperation(shopDomain, accessToken, operationId);
 
     if (!downloadUrl) {
       console.warn(`[${shopDomain}] Bulk op returned no data`);
+      await setProgress(env, shopDomain, { phase: 'done', processed: 0, startedAt });
       await markSyncDone(db, storeId);
       return;
     }
 
-    await processJsonlStream(downloadUrl, storeId, db);
+    await setProgress(env, shopDomain, { phase: 'processing', processed: 0, startedAt });
+    const processed = await processJsonlStream(downloadUrl, storeId, db, env, shopDomain, startedAt);
+    await setProgress(env, shopDomain, { phase: 'done', processed, startedAt });
     await markSyncDone(db, storeId);
-    console.log(`[${shopDomain}] Bulk sync completed`);
-  } catch (err) {
+    console.log(`[${shopDomain}] Bulk sync completed — ${processed} products`);
+  } catch (err: any) {
     console.error(`[${shopDomain}] Bulk sync failed:`, err);
-    await db
-      .update(stores)
-      .set({ syncStatus: 'FAILED', updatedAt: new Date().toISOString() })
-      .where(eq(stores.id, storeId));
+    await Promise.all([
+      db.update(stores).set({ syncStatus: 'FAILED', updatedAt: new Date().toISOString() }).where(eq(stores.id, storeId)),
+      setProgress(env, shopDomain, { phase: 'failed', error: err.message, startedAt }),
+    ]);
     throw err;
   }
 }
@@ -82,11 +103,19 @@ async function submitBulkOperation(
             edges {
               node {
                 id title vendor productType handle status tags bodyHtml publishedAt
+                images {
+                  edges {
+                    node {
+                      id url altText width height
+                    }
+                  }
+                }
                 variants {
                   edges {
                     node {
                       id sku title price compareAtPrice weight weightUnit barcode
                       taxable requiresShipping position
+                      image { url altText }
                       selectedOptions { name value }
                       inventoryItem {
                         id
@@ -154,7 +183,10 @@ async function processJsonlStream(
   downloadUrl: string,
   storeId: string,
   db: any,
-): Promise<void> {
+  env: Env,
+  shopDomain: string,
+  startedAt: string,
+): Promise<number> {
   const res = await fetch(downloadUrl);
   if (!res.ok || !res.body) {
     throw new Error(`Failed to fetch bulk result: ${res.status}`);
@@ -164,8 +196,10 @@ async function processJsonlStream(
   const variantBuffer: Array<{ raw: any; parentShopifyId: string }> = [];
   const inventoryBuffer: any[] = [];
   const metafieldBuffer: any[] = [];
+  const imageBuffer: any[] = []; // product images
 
   const productMap = new Map<string, string>(); // shopifyProductId → dbId
+  let totalProcessed = 0;
 
   // Stream JSONL using TextDecoderStream
   const reader = res.body
@@ -202,10 +236,16 @@ async function processJsonlStream(
         inventoryBuffer.push(node);
       } else if (node.namespace !== undefined && node.__parentId) {
         metafieldBuffer.push(node);
+      } else if (node.url !== undefined && node.__parentId) {
+        // Product image node
+        imageBuffer.push(node);
       }
 
       if (productBuffer.length >= BATCH_SIZE) {
-        await upsertProductBatch(productBuffer.splice(0), productMap, db);
+        const batch = productBuffer.splice(0);
+        await upsertProductBatch(batch, productMap, db);
+        totalProcessed += batch.length;
+        await setProgress(env, shopDomain, { phase: 'processing', processed: totalProcessed, startedAt });
       }
     }
   }
@@ -222,10 +262,13 @@ async function processJsonlStream(
 
   if (productBuffer.length > 0) {
     await upsertProductBatch(productBuffer, productMap, db);
+    totalProcessed += productBuffer.length;
   }
 
   await upsertVariantBatch(variantBuffer, storeId, productMap, inventoryBuffer, db);
   await upsertMetafieldBatch(metafieldBuffer, productMap, db);
+  await upsertImageBatch(imageBuffer, productMap, db);
+  return totalProcessed;
 }
 
 function mapProductNode(node: any, storeId: string) {
@@ -311,6 +354,7 @@ async function upsertVariantBatch(
       option1: opts[0]?.value || null,
       option2: opts[1]?.value || null,
       option3: opts[2]?.value || null,
+      imageSrc: stripQuery(raw.image?.url) || null,
       updatedAt: new Date().toISOString(),
     };
 
@@ -353,6 +397,54 @@ async function upsertVariantBatch(
             available: level.available || 0,
           });
         }
+      }
+    }
+  }
+}
+
+async function upsertImageBatch(
+  imageNodes: any[],
+  productMap: Map<string, string>,
+  db: any,
+): Promise<void> {
+  // Group by product so we can assign position
+  const byProduct = new Map<string, any[]>();
+  for (const img of imageNodes) {
+    const pid = img.__parentId;
+    if (!byProduct.has(pid)) byProduct.set(pid, []);
+    byProduct.get(pid)!.push(img);
+  }
+
+  for (const [shopifyProductId, images] of byProduct) {
+    const productId = productMap.get(shopifyProductId);
+    if (!productId) continue;
+
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const src = stripQuery(img.url);
+      if (!src) continue;
+
+      const existing = await db.query.productImages.findFirst({
+        where: (pi: any, { and: a, eq: e }: any) =>
+          a(e(pi.shopifyId, img.id), e(pi.productId, productId)),
+        columns: { id: true },
+      });
+
+      if (existing) {
+        await db.update(productImages)
+          .set({ src, altText: img.altText || null, width: img.width || null, height: img.height || null, position: i + 1 })
+          .where(eq(productImages.id, existing.id));
+      } else {
+        await db.insert(productImages).values({
+          id: crypto.randomUUID(),
+          productId,
+          shopifyId: img.id,
+          src,
+          altText: img.altText || null,
+          width: img.width || null,
+          height: img.height || null,
+          position: i + 1,
+        });
       }
     }
   }
@@ -453,6 +545,7 @@ async function handleFeedJob(
           with: {
             metafields: true,
             collections: { with: { collection: true } },
+            images: { orderBy: (img: any, { asc }: any) => [asc(img.position)] },
           },
           where: (p: any, { and: a, eq: e }: any) =>
             a(e(p.storeId, storeId), e(p.status, 'active'), e(p.excludeFromFeeds, false)),
@@ -468,9 +561,8 @@ async function handleFeedJob(
     // Apply filter rules
     const filtered = applyFilters(activeVariants, filterRules);
 
-    // Pre-fetch media for all SKUs
-    const skus = filtered.map((v) => v.sku).filter((s): s is string => Boolean(s));
-    const mediaMap = await resolveForSkus(skus, env, 10);
+    // Images come directly from DB (Shopify CDN URLs, query params already stripped)
+    const mediaMap = new Map<string, any>();
 
     // Map each variant to a feed row
     const headers = columnMappings.map((m) => m.feedColumn);

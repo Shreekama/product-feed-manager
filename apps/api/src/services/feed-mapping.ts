@@ -1,4 +1,4 @@
-import { resolveForSku, deriveBaseSku, type MediaResult } from './media';
+import { deriveBaseSku } from './media';
 import type { Env } from '../types';
 
 export interface ColumnMapping {
@@ -14,35 +14,25 @@ export interface FeedRow {
 
 /**
  * Build a feed row for a variant using the given column mappings.
- * mediaMap: pre-fetched media keyed by SKU (to avoid repeated lookups).
+ * Images come directly from the DB (Shopify CDN URLs, query params already stripped).
  */
 export async function buildRow(
   variant: any,
   mappings: ColumnMapping[],
-  mediaMap: Map<string, MediaResult>,
+  _mediaMap: Map<string, any>,
   env: Env,
   shopDomain?: string,
 ): Promise<FeedRow> {
   const row: FeedRow = {};
   const product = variant.product;
 
-  // Aggregate inventory across all locations
   const totalInventory = (variant.inventoryLevels || []).reduce(
     (sum: number, l: any) => sum + (l.available || 0),
     0,
   );
 
-  // Resolve media
-  const sku = variant.sku || '';
-  let mediaResult = mediaMap.get(sku);
-  if (!mediaResult && sku) {
-    mediaResult = await resolveForSku(sku, env);
-    mediaMap.set(sku, mediaResult);
-  }
-
   for (const mapping of mappings) {
     let value = '';
-
     try {
       switch (mapping.sourceType) {
         case 'product':
@@ -55,20 +45,12 @@ export async function buildRow(
           value = resolveMetafield(product, mapping.sourceKey);
           break;
         case 'computed':
-          value = resolveComputed(
-            mapping.sourceKey,
-            variant,
-            product,
-            mediaResult ?? null,
-            totalInventory,
-            shopDomain,
-          );
+          value = resolveComputed(mapping.sourceKey, variant, product, totalInventory, shopDomain);
           break;
       }
     } catch {
       value = '';
     }
-
     row[mapping.feedColumn] = applyTransform(value, mapping.transform);
   }
 
@@ -140,21 +122,22 @@ function resolveComputed(
   key: string,
   variant: any,
   product: any,
-  media: MediaResult | null,
   inventory: number,
   shopDomain?: string,
 ): string {
+  // product.images is sorted by position, URLs already have query params stripped
+  const productImgs: any[] = product.images || [];
+
   switch (key) {
     case 'image_url':
-      return media?.primaryImage || media?.images?.[0] || '';
-    case 'all_images':
-      return (media?.images || []).join(',');
+      // Prefer variant-specific image, fall back to first product image
+      return variant.imageSrc || productImgs[0]?.src || '';
     case 'image_url_2':
-      return media?.images?.[1] || '';
+      return productImgs[1]?.src || '';
     case 'image_url_3':
-      return media?.images?.[2] || '';
-    case 'video_url':
-      return media?.videos?.[0] || '';
+      return productImgs[2]?.src || '';
+    case 'all_images':
+      return productImgs.map((img: any) => img.src).join(',');
     case 'inventory':
       return String(inventory);
     case 'availability':

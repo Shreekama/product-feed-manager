@@ -174,13 +174,39 @@ shopifyRoutes.get('/callback', async (c) => {
   return c.redirect(`${webUrl}?shop=${shop}&installed=true`);
 });
 
+// ─── GET /sync/status ─────────────────────────────────────────────────────────
+
+shopifyRoutes.get('/sync/status', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+  const db = getDb(c.env);
+
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { id: true, syncStatus: true, lastSyncAt: true },
+  });
+
+  if (!store) {
+    return c.json({ status: 'NOT_CONNECTED', lastSyncAt: null, productCount: 0, progress: null });
+  }
+
+  const [progress, countRow] = await Promise.all([
+    c.env.MEDIA_KV.get<any>(`sync_progress:${shopDomain}`, 'json'),
+    c.env.DB.prepare('SELECT COUNT(*) as count FROM products WHERE store_id = ?')
+      .bind(store.id).first<{ count: number }>(),
+  ]);
+
+  return c.json({
+    status: store.syncStatus,
+    lastSyncAt: store.lastSyncAt || null,
+    productCount: countRow?.count ?? 0,
+    progress,
+  });
+});
+
 // ─── POST /sync ───────────────────────────────────────────────────────────────
 
 shopifyRoutes.post('/sync', async (c) => {
-  const body = await c.req.json<{ shopDomain: string }>();
-  const { shopDomain } = body;
-
-  if (!shopDomain) return c.json({ error: 'Missing shopDomain' }, 400);
+  const shopDomain = 'd7f63b.myshopify.com';
 
   const db = getDb(c.env);
   const store = await db.query.stores.findFirst({

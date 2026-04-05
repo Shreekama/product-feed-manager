@@ -3,8 +3,79 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productsApi } from '../../lib/api';
-import { Search, Filter, ChevronLeft, ChevronRight, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, ToggleLeft, ToggleRight, RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
+import { formatDistanceToNow } from 'date-fns';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
+
+function SyncBanner() {
+  const { data, refetch } = useQuery({
+    queryKey: ['sync-status'],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/shopify/sync/status`);
+      return res.json() as any;
+    },
+    refetchInterval: (data: any) => (data?.status === 'SYNCING' ? 3000 : false),
+  });
+
+  const [starting, setStarting] = useState(false);
+
+  const startSync = async () => {
+    setStarting(true);
+    try {
+      await fetch(`${API_URL}/shopify/sync`, { method: 'POST' });
+      await refetch();
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const isSyncing = data?.status === 'SYNCING';
+  const phase = data?.progress?.phase;
+  const phaseLabel: Record<string, string> = {
+    submitting: 'Connecting to Shopify…',
+    waiting: 'Shopify preparing data…',
+    processing: `Importing… ${data?.progress?.processed ?? 0} products`,
+    done: 'Sync complete',
+    failed: 'Sync failed',
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-3 mb-4 flex items-center gap-4 text-sm">
+      <div className="flex-1 flex items-center gap-3">
+        <span className="font-medium text-gray-700">d7f63b.myshopify.com</span>
+        {data?.productCount !== undefined && (
+          <span className="text-gray-400">{data.productCount} products</span>
+        )}
+        {data?.lastSyncAt && !isSyncing && (
+          <span className="text-gray-400 text-xs">
+            Last sync {formatDistanceToNow(new Date(data.lastSyncAt), { addSuffix: true })}
+          </span>
+        )}
+        {isSyncing && phase && (
+          <span className="text-brand-600 text-xs flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            {phaseLabel[phase] || 'Syncing…'}
+          </span>
+        )}
+      </div>
+      <button
+        onClick={startSync}
+        disabled={isSyncing || starting}
+        className={clsx(
+          'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+          isSyncing || starting
+            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            : 'bg-brand-600 hover:bg-brand-700 text-white',
+        )}
+      >
+        <RefreshCw className={clsx('w-3 h-3', (isSyncing || starting) && 'animate-spin')} />
+        {isSyncing ? 'Syncing…' : 'Sync Now'}
+      </button>
+    </div>
+  );
+}
 
 export default function ProductsPage() {
   const qc = useQueryClient();
@@ -37,7 +108,8 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-6">Products</h1>
+      <h1 className="text-xl font-semibold mb-4">Products</h1>
+      <SyncBanner />
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 flex flex-wrap gap-3 items-center">

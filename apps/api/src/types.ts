@@ -18,8 +18,6 @@ export interface Env {
   ENTRA_TENANT_ID: string;
   ENTRA_CLIENT_SECRET: string;
   // Misc
-  MEDIA_BASE_URL: string;
-  MEDIA_MAX_IMAGES: string;
   MEDIA_CACHE_TTL: string;
   ENCRYPTION_KEY: string;
 }
