@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, Link2 } from 'lucide-react';
+import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { clsx } from 'clsx';
 
@@ -63,37 +63,18 @@ function SyncCard() {
   const pct       = cfg?.pct ?? 0;
   const processed = progress?.processed ?? 0;
 
-  // ── Not connected yet ─────────────────────────────────────────────────────
-  if (status === 'NOT_CONNECTED') {
-    const installUrl = `${API_URL}/shopify/install?shop=${SHOP_DOMAIN}`;
+  // ── Token not set in Cloudflare ───────────────────────────────────────────
+  if (status === 'NOT_CONFIGURED') {
     return (
-      <div className="bg-white rounded-xl border border-amber-200 p-5 space-y-4">
+      <div className="bg-white rounded-xl border border-amber-200 p-5 space-y-3">
         <div className="flex items-center gap-2">
           <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-          <h2 className="font-medium text-gray-700">Shopify Store Not Connected</h2>
+          <h2 className="font-medium text-gray-700">SHOPIFY_STORE_TOKEN not set</h2>
         </div>
-
         <p className="text-sm text-gray-500">
-          The app needs to be installed on <span className="font-mono font-medium text-gray-700">{SHOP_DOMAIN}</span> to sync products.
-          This is a one-time step — click the button below and approve the permissions in Shopify.
+          Add <code className="bg-gray-100 px-1 rounded text-xs font-mono">SHOPIFY_STORE_TOKEN</code> as a secret in your Cloudflare Worker environment.
+          You can find the access token in your Shopify Partner dashboard under the app's API credentials.
         </p>
-
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
-          <p className="font-medium">Before clicking, make sure in your Shopify Partner dashboard:</p>
-          <p>App setup → Allowed redirection URLs → add:</p>
-          <code className="block bg-white border border-amber-200 rounded px-2 py-1 font-mono text-amber-900 break-all">
-            {typeof window !== 'undefined' ? window.location.origin : 'https://your-worker-url'}/api/shopify/callback
-          </code>
-        </div>
-
-        <a
-          href={installUrl}
-          className="inline-flex items-center gap-2 bg-[#008060] hover:bg-[#006e52] text-white px-5 py-2.5 rounded-md text-sm font-medium transition-colors"
-        >
-          <Link2 className="w-4 h-4" />
-          Connect {SHOP_DOMAIN}
-          <ExternalLink className="w-3 h-3 opacity-70" />
-        </a>
       </div>
     );
   }
