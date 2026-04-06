@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package } from 'lucide-react';
+import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, Square } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { clsx } from 'clsx';
 
@@ -18,9 +18,10 @@ const PHASE_CONFIG: Record<string, { label: string; pct: number; pulse: boolean 
 };
 
 function SyncCard() {
-  const [syncData, setSyncData]   = useState<any>(null);
-  const [starting, setStarting]   = useState(false);
-  const [syncError, setSyncError] = useState('');
+  const [syncData, setSyncData]     = useState<any>(null);
+  const [starting, setStarting]     = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [syncError, setSyncError]   = useState('');
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -36,6 +37,20 @@ function SyncCard() {
     const id = setInterval(fetchStatus, 3000);
     return () => clearInterval(id);
   }, [fetchStatus, syncData?.status]);
+
+  const cancelSync = async () => {
+    setCancelling(true);
+    setSyncError('');
+    try {
+      const res = await fetch(`${API_URL}/shopify/sync/cancel`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json() as any).error || 'Cancel failed');
+      await fetchStatus();
+    } catch (e: any) {
+      setSyncError(e.message);
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const startSync = async () => {
     setStarting(true);
@@ -127,10 +142,10 @@ function SyncCard() {
       <div className="flex items-center gap-3">
         <button
           onClick={startSync}
-          disabled={isSyncing || starting}
+          disabled={isSyncing || starting || cancelling}
           className={clsx(
             'inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-            isSyncing || starting
+            isSyncing || starting || cancelling
               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
               : 'bg-brand-600 hover:bg-brand-700 text-white',
           )}
@@ -138,6 +153,21 @@ function SyncCard() {
           <RefreshCw className={clsx('w-4 h-4', (isSyncing || starting) && 'animate-spin')} />
           {isSyncing ? 'Syncing…' : starting ? 'Starting…' : 'Full Sync'}
         </button>
+        {isSyncing && (
+          <button
+            onClick={cancelSync}
+            disabled={cancelling}
+            className={clsx(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors border',
+              cancelling
+                ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                : 'border-red-300 text-red-600 hover:bg-red-50',
+            )}
+          >
+            <Square className={clsx('w-4 h-4', cancelling && 'opacity-50')} />
+            {cancelling ? 'Stopping…' : 'Stop Sync'}
+          </button>
+        )}
         {isDone && (
           <div className="flex items-center gap-1.5 text-green-600 text-sm">
             <CheckCircle className="w-4 h-4" />
