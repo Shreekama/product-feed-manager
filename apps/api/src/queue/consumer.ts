@@ -194,18 +194,14 @@ async function processJsonlStream(
   const productBuffer: any[] = [];
   const variantBuffer: Array<{ raw: any; parentShopifyId: string }> = [];
   const metafieldBuffer: any[] = [];
-  const imageBuffer: any[] = []; // product images
+  const imageBuffer: any[] = [];
 
   const productMap = new Map<string, string>(); // shopifyProductId → dbId
   let totalProcessed = 0;
 
-  // Stream JSONL using TextDecoderStream
-  const reader = res.body
-    .pipeThrough(new TextDecoderStream())
-    .getReader();
-
+  // Stream JSONL
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
-  const BATCH_SIZE = 200;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -218,13 +214,8 @@ async function processJsonlStream(
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-
       let node: any;
-      try {
-        node = JSON.parse(trimmed);
-      } catch {
-        continue;
-      }
+      try { node = JSON.parse(trimmed); } catch { continue; }
 
       if (node.title !== undefined && node.vendor !== undefined && !node.__parentId) {
         productBuffer.push(mapProductNode(node, storeId));
@@ -233,37 +224,29 @@ async function processJsonlStream(
       } else if (node.namespace !== undefined && node.__parentId) {
         metafieldBuffer.push(node);
       } else if (node.url !== undefined && node.__parentId) {
-        // Product image node
         imageBuffer.push(node);
-      }
-
-      if (productBuffer.length >= BATCH_SIZE) {
-        const batch = productBuffer.splice(0);
-        await upsertProductBatch(batch, productMap, db);
-        totalProcessed += batch.length;
-        await setProgress(env, shopDomain, { phase: 'processing', processed: totalProcessed, startedAt });
       }
     }
   }
 
-  // Flush remaining line in buffer
+  // Flush remaining line
   if (buffer.trim()) {
     try {
       const node = JSON.parse(buffer.trim());
-      if (node.title !== undefined && !node.__parentId) {
-        productBuffer.push(mapProductNode(node, storeId));
-      }
+      if (node.title !== undefined && !node.__parentId) productBuffer.push(mapProductNode(node, storeId));
     } catch { /* ignore */ }
   }
 
-  if (productBuffer.length > 0) {
-    await upsertProductBatch(productBuffer, productMap, db);
-    totalProcessed += productBuffer.length;
-  }
+  // Batch-upsert everything — each call is O(1) HTTP round trips via D1 batch
+  await setProgress(env, shopDomain, { phase: 'processing', processed: 0, startedAt });
+  await upsertProductBatch(productBuffer, productMap, env);
+  totalProcessed = productBuffer.length;
+  await setProgress(env, shopDomain, { phase: 'processing', processed: totalProcessed, startedAt });
 
-  await upsertVariantBatch(variantBuffer, storeId, productMap, db);
-  await upsertMetafieldBatch(metafieldBuffer, productMap, db);
-  await upsertImageBatch(imageBuffer, productMap, db);
+  await upsertVariantBatch(variantBuffer, storeId, productMap, env);
+  await upsertImageBatch(imageBuffer, productMap, env);
+  await upsertMetafieldBatch(metafieldBuffer, productMap, env);
+
   return totalProcessed;
 }
 
@@ -286,88 +269,121 @@ function mapProductNode(node: any, storeId: string) {
   };
 }
 
+/** Run D1 statements in chunks — D1 batch has a practical limit per call */
+async function d1Batch(env: Env, stmts: D1PreparedStatement[]): Promise<void> {
+  const CHUNK = 100;
+  for (let i = 0; i < stmts.length; i += CHUNK) {
+    await env.DB.batch(stmts.slice(i, i + CHUNK));
+  }
+}
+
 async function upsertProductBatch(
   productNodes: any[],
   productMap: Map<string, string>,
-  db: any,
+  env: Env,
 ): Promise<void> {
+  if (!productNodes.length) return;
+  const now = new Date().toISOString();
+
+  // Fetch all existing products for this store in ONE query
+  const storeId = productNodes[0].storeId;
+  const { results: existing } = await env.DB.prepare(
+    `SELECT id, shopify_id FROM products WHERE store_id = ?`,
+  ).bind(storeId).all<{ id: string; shopify_id: string }>();
+  const existingMap = new Map(existing.map(r => [r.shopify_id, r.id]));
+
+  const stmts: D1PreparedStatement[] = [];
   for (const p of productNodes) {
-    const existing = await db.query.products.findFirst({
-      where: (prod: any, { and: a, eq: e }: any) =>
-        a(e(prod.shopifyId, p.shopifyId), e(prod.storeId, p.storeId)),
-      columns: { id: true },
-    });
+    const id = existingMap.get(p.shopifyId) ?? crypto.randomUUID();
+    productMap.set(p.shopifyId, id);
 
-    let productId: string;
-    if (existing) {
-      productId = existing.id;
-      await db.update(products).set({ ...p, updatedAt: new Date().toISOString() }).where(eq(products.id, productId));
-    } else {
-      productId = crypto.randomUUID();
-      await db.insert(products).values({ id: productId, ...p });
-    }
-
-    productMap.set(p.shopifyId, productId);
+    stmts.push(env.DB.prepare(`
+      INSERT INTO products
+        (id, store_id, shopify_id, title, vendor, product_type, handle, status, tags, body_html, published_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (shopify_id, store_id) DO UPDATE SET
+        title = excluded.title, vendor = excluded.vendor,
+        product_type = excluded.product_type, handle = excluded.handle,
+        status = excluded.status, tags = excluded.tags,
+        body_html = excluded.body_html, published_at = excluded.published_at,
+        updated_at = excluded.updated_at
+    `).bind(id, p.storeId, p.shopifyId, p.title, p.vendor, p.productType,
+            p.handle, p.status, p.tags, p.bodyHtml, p.publishedAt, now));
   }
+
+  await d1Batch(env, stmts);
 }
 
 async function upsertVariantBatch(
   variantBuffer: Array<{ raw: any; parentShopifyId: string }>,
   _storeId: string,
   productMap: Map<string, string>,
-  db: any,
+  env: Env,
 ): Promise<void> {
+  if (!variantBuffer.length) return;
+  const now = new Date().toISOString();
+
+  // Collect all product IDs to fetch existing variants in one query
+  const productIds = [...new Set(
+    variantBuffer.map(v => productMap.get(v.parentShopifyId)).filter(Boolean),
+  )] as string[];
+
+  const placeholders = productIds.map(() => '?').join(',');
+  const { results: existing } = await env.DB.prepare(
+    `SELECT id, shopify_id, product_id FROM variants WHERE product_id IN (${placeholders})`,
+  ).bind(...productIds).all<{ id: string; shopify_id: string; product_id: string }>();
+
+  const existingMap = new Map(existing.map(r => [`${r.shopify_id}:${r.product_id}`, r.id]));
+
+  const stmts: D1PreparedStatement[] = [];
   for (const { raw, parentShopifyId } of variantBuffer) {
     const productId = productMap.get(parentShopifyId);
     if (!productId) continue;
 
     const opts = raw.selectedOptions || [];
     const shopifyVariantId = raw.id;
+    const id = existingMap.get(`${shopifyVariantId}:${productId}`) ?? crypto.randomUUID();
 
-    const variantData = {
-      shopifyId: shopifyVariantId,
-      productId,
-      sku: raw.sku || null,
-      title: raw.title,
-      price: String(raw.price || '0'),
-      compareAtPrice: raw.compareAtPrice ? String(raw.compareAtPrice) : null,
-      inventoryItemId: raw.inventoryItem?.id || null,
-      inventoryQuantity: raw.inventoryQuantity ?? 0,
-      barcode: raw.barcode || null,
-      taxable: raw.taxable ?? true,
-      availableForSale: raw.availableForSale ?? true,
-      position: raw.position || 1,
-      option1: opts[0]?.value || null,
-      option2: opts[1]?.value || null,
-      option3: opts[2]?.value || null,
-      imageSrc: stripQuery(raw.image?.url) || null,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const existingVariant = await db.query.variants.findFirst({
-      where: (v: any, { and: a, eq: e }: any) =>
-        a(e(v.shopifyId, shopifyVariantId), e(v.productId, productId)),
-      columns: { id: true },
-    });
-
-    let variantId: string;
-    if (existingVariant) {
-      variantId = existingVariant.id;
-      await db.update(variants).set(variantData).where(eq(variants.id, variantId));
-    } else {
-      variantId = crypto.randomUUID();
-      await db.insert(variants).values({ id: variantId, ...variantData });
-    }
-
+    stmts.push(env.DB.prepare(`
+      INSERT INTO variants
+        (id, product_id, shopify_id, sku, title, price, compare_at_price,
+         inventory_item_id, inventory_quantity, barcode, taxable, available_for_sale,
+         position, option1, option2, option3, image_src, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (shopify_id, product_id) DO UPDATE SET
+        sku = excluded.sku, title = excluded.title, price = excluded.price,
+        compare_at_price = excluded.compare_at_price,
+        inventory_item_id = excluded.inventory_item_id,
+        inventory_quantity = excluded.inventory_quantity,
+        barcode = excluded.barcode, taxable = excluded.taxable,
+        available_for_sale = excluded.available_for_sale,
+        position = excluded.position, option1 = excluded.option1,
+        option2 = excluded.option2, option3 = excluded.option3,
+        image_src = excluded.image_src, updated_at = excluded.updated_at
+    `).bind(
+      id, productId, shopifyVariantId,
+      raw.sku || null, raw.title, String(raw.price || '0'),
+      raw.compareAtPrice ? String(raw.compareAtPrice) : null,
+      raw.inventoryItem?.id || null, raw.inventoryQuantity ?? 0,
+      raw.barcode || null, raw.taxable ? 1 : 0,
+      raw.availableForSale !== false ? 1 : 0,
+      raw.position || 1,
+      opts[0]?.value || null, opts[1]?.value || null, opts[2]?.value || null,
+      stripQuery(raw.image?.url) || null, now,
+    ));
   }
+
+  await d1Batch(env, stmts);
 }
 
 async function upsertImageBatch(
   imageNodes: any[],
   productMap: Map<string, string>,
-  db: any,
+  env: Env,
 ): Promise<void> {
-  // Group by product so we can assign position
+  if (!imageNodes.length) return;
+
+  // Group by product and assign position
   const byProduct = new Map<string, any[]>();
   for (const img of imageNodes) {
     const pid = img.__parentId;
@@ -375,72 +391,56 @@ async function upsertImageBatch(
     byProduct.get(pid)!.push(img);
   }
 
+  const stmts: D1PreparedStatement[] = [];
   for (const [shopifyProductId, images] of byProduct) {
     const productId = productMap.get(shopifyProductId);
     if (!productId) continue;
 
-    for (let i = 0; i < images.length; i++) {
-      const img = images[i];
+    images.forEach((img, i) => {
       const src = stripQuery(img.url);
-      if (!src) continue;
-
-      const existing = await db.query.productImages.findFirst({
-        where: (pi: any, { and: a, eq: e }: any) =>
-          a(e(pi.shopifyId, img.id), e(pi.productId, productId)),
-        columns: { id: true },
-      });
-
-      if (existing) {
-        await db.update(productImages)
-          .set({ src, altText: img.altText || null, width: img.width || null, height: img.height || null, position: i + 1 })
-          .where(eq(productImages.id, existing.id));
-      } else {
-        await db.insert(productImages).values({
-          id: crypto.randomUUID(),
-          productId,
-          shopifyId: img.id,
-          src,
-          altText: img.altText || null,
-          width: img.width || null,
-          height: img.height || null,
-          position: i + 1,
-        });
-      }
-    }
+      if (!src) return;
+      stmts.push(env.DB.prepare(`
+        INSERT INTO product_images (id, product_id, shopify_id, src, alt_text, width, height, position)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (shopify_id, product_id) DO UPDATE SET
+          src = excluded.src, alt_text = excluded.alt_text,
+          width = excluded.width, height = excluded.height,
+          position = excluded.position
+      `).bind(
+        crypto.randomUUID(), productId, img.id, src,
+        img.altText || null, img.width || null, img.height || null, i + 1,
+      ));
+    });
   }
+
+  await d1Batch(env, stmts);
 }
 
 async function upsertMetafieldBatch(
   metafieldNodes: any[],
   productMap: Map<string, string>,
-  db: any,
+  env: Env,
 ): Promise<void> {
+  if (!metafieldNodes.length) return;
+  const now = new Date().toISOString();
+
+  const stmts: D1PreparedStatement[] = [];
   for (const mf of metafieldNodes) {
     const productId = productMap.get(mf.__parentId);
     if (!productId) continue;
 
-    const existing = await db.query.metafields.findFirst({
-      where: (m: any, { eq: e }: any) => e(m.shopifyId, mf.id),
-      columns: { id: true },
-    });
-
-    if (existing) {
-      await db
-        .update(metafields)
-        .set({ value: String(mf.value), type: mf.type, updatedAt: new Date().toISOString() })
-        .where(eq(metafields.id, existing.id));
-    } else {
-      await db.insert(metafields).values({
-        id: crypto.randomUUID(),
-        productId,
-        shopifyId: mf.id,
-        namespace: mf.namespace,
-        key: mf.key,
-        value: String(mf.value),
-        type: mf.type,
-      });
-    }
+    stmts.push(env.DB.prepare(`
+      INSERT INTO metafields (id, product_id, shopify_id, namespace, key, value, type, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (shopify_id) DO UPDATE SET
+        value = excluded.value, type = excluded.type, updated_at = excluded.updated_at
+    `).bind(
+      crypto.randomUUID(), productId, mf.id,
+      mf.namespace, mf.key, String(mf.value), mf.type, now,
+    ));
   }
+
+  await d1Batch(env, stmts);
 }
 
 async function markSyncDone(db: any, storeId: string): Promise<void> {
