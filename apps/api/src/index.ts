@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './types';
-import { MIGRATION_SQL } from './db/migration';
+import { MIGRATION_SQL, ALTER_TABLE_SQL } from './db/migration';
 import { shopifyRoutes } from './routes/shopify';
 import { webhookRoutes } from './routes/webhooks';
 import { productRoutes } from './routes/products';
@@ -38,13 +38,35 @@ app.get('/api/health', (c) => c.json({ ok: true, ts: new Date().toISOString() })
 // ─── One-time DB setup ────────────────────────────────────────────────────────
 // Visit /api/setup once in your browser to create all tables.
 app.get('/api/setup', async (c) => {
+  const results: string[] = [];
+  const errors: string[] = [];
+
+  // 1. Run CREATE TABLE / CREATE INDEX statements as a batch
   const stmts = MIGRATION_SQL.split(';').map(s => s.trim()).filter(Boolean);
   try {
     await c.env.DB.batch(stmts.map(sql => c.env.DB.prepare(sql)));
-    return c.json({ ok: true, message: `Setup complete — ${stmts.length} statements executed.` });
+    results.push(`Base schema: ${stmts.length} statements OK`);
   } catch (err: any) {
-    return c.json({ ok: false, error: err.message }, 500);
+    errors.push(`Base schema error: ${err.message}`);
   }
+
+  // 2. Run ALTER TABLE statements one-by-one, ignoring "duplicate column" errors
+  let altered = 0;
+  for (const sql of ALTER_TABLE_SQL) {
+    try {
+      await c.env.DB.prepare(sql).run();
+      altered++;
+    } catch (err: any) {
+      const msg = err.message || '';
+      // Ignore "duplicate column name" and "already exists" — means column/index already there
+      if (!msg.includes('duplicate column') && !msg.includes('already exists')) {
+        errors.push(`ALTER: ${msg} — SQL: ${sql.slice(0, 80)}`);
+      }
+    }
+  }
+  results.push(`Schema evolution: ${altered}/${ALTER_TABLE_SQL.length} ALTER statements applied`);
+
+  return c.json({ ok: errors.length === 0, results, errors });
 });
 
 // ─── Serve frontend static files / SPA fallback for all non-API routes ───────
