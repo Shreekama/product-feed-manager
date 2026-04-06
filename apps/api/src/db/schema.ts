@@ -120,9 +120,9 @@ export const variants = sqliteTable(
     inventoryItemId: text('inventory_item_id'),
     barcode: text('barcode'),
     taxable: integer('taxable', { mode: 'boolean' }).notNull().default(true),
-    requiresShipping: integer('requires_shipping', { mode: 'boolean' })
-      .notNull()
-      .default(true),
+    requiresShipping: integer('requires_shipping', { mode: 'boolean' }).notNull().default(true),
+    availableForSale: integer('available_for_sale', { mode: 'boolean' }).notNull().default(true),
+    inventoryQuantity: integer('inventory_quantity').notNull().default(0),
     position: integer('position').notNull().default(1),
     option1: text('option1'),
     option2: text('option2'),

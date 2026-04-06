@@ -117,16 +117,11 @@ async function submitBulkOperation(
                 variants {
                   edges {
                     node {
-                      id sku title price compareAtPrice weight weightUnit barcode
-                      taxable requiresShipping position
+                      id sku title price compareAtPrice barcode
+                      taxable position availableForSale inventoryQuantity
                       image { url altText }
                       selectedOptions { name value }
-                      inventoryItem {
-                        id
-                        inventoryLevels {
-                          edges { node { id available location { id } } }
-                        }
-                      }
+                      inventoryItem { id }
                     }
                   }
                 }
@@ -198,7 +193,6 @@ async function processJsonlStream(
 
   const productBuffer: any[] = [];
   const variantBuffer: Array<{ raw: any; parentShopifyId: string }> = [];
-  const inventoryBuffer: any[] = [];
   const metafieldBuffer: any[] = [];
   const imageBuffer: any[] = []; // product images
 
@@ -236,8 +230,6 @@ async function processJsonlStream(
         productBuffer.push(mapProductNode(node, storeId));
       } else if (node.sku !== undefined && node.__parentId) {
         variantBuffer.push({ raw: node, parentShopifyId: node.__parentId });
-      } else if (node.available !== undefined && node.__parentId) {
-        inventoryBuffer.push(node);
       } else if (node.namespace !== undefined && node.__parentId) {
         metafieldBuffer.push(node);
       } else if (node.url !== undefined && node.__parentId) {
@@ -269,7 +261,7 @@ async function processJsonlStream(
     totalProcessed += productBuffer.length;
   }
 
-  await upsertVariantBatch(variantBuffer, storeId, productMap, inventoryBuffer, db);
+  await upsertVariantBatch(variantBuffer, storeId, productMap, db);
   await upsertMetafieldBatch(metafieldBuffer, productMap, db);
   await upsertImageBatch(imageBuffer, productMap, db);
   return totalProcessed;
@@ -323,17 +315,8 @@ async function upsertVariantBatch(
   variantBuffer: Array<{ raw: any; parentShopifyId: string }>,
   _storeId: string,
   productMap: Map<string, string>,
-  inventoryBuffer: any[],
   db: any,
 ): Promise<void> {
-  // Build inventory index: inventoryItemId → levels[]
-  const invIndex = new Map<string, any[]>();
-  for (const inv of inventoryBuffer) {
-    const key = inv.__parentId;
-    if (!invIndex.has(key)) invIndex.set(key, []);
-    invIndex.get(key)!.push(inv);
-  }
-
   for (const { raw, parentShopifyId } of variantBuffer) {
     const productId = productMap.get(parentShopifyId);
     if (!productId) continue;
@@ -348,12 +331,11 @@ async function upsertVariantBatch(
       title: raw.title,
       price: String(raw.price || '0'),
       compareAtPrice: raw.compareAtPrice ? String(raw.compareAtPrice) : null,
-      weight: raw.weight || null,
-      weightUnit: raw.weightUnit || null,
       inventoryItemId: raw.inventoryItem?.id || null,
+      inventoryQuantity: raw.inventoryQuantity ?? 0,
       barcode: raw.barcode || null,
       taxable: raw.taxable ?? true,
-      requiresShipping: raw.requiresShipping ?? true,
+      availableForSale: raw.availableForSale ?? true,
       position: raw.position || 1,
       option1: opts[0]?.value || null,
       option2: opts[1]?.value || null,
@@ -377,32 +359,6 @@ async function upsertVariantBatch(
       await db.insert(variants).values({ id: variantId, ...variantData });
     }
 
-    // Upsert inventory levels
-    const invItemId = raw.inventoryItem?.id;
-    if (invItemId && invIndex.has(invItemId)) {
-      for (const level of invIndex.get(invItemId)!) {
-        const locationId = level.location?.id || 'unknown';
-        const existingLevel = await db.query.inventoryLevels.findFirst({
-          where: (il: any, { and: a, eq: e }: any) =>
-            a(e(il.variantId, variantId), e(il.locationId, locationId)),
-          columns: { id: true },
-        });
-
-        if (existingLevel) {
-          await db
-            .update(inventoryLevels)
-            .set({ available: level.available || 0, updatedAt: new Date().toISOString() })
-            .where(eq(inventoryLevels.id, existingLevel.id));
-        } else {
-          await db.insert(inventoryLevels).values({
-            id: crypto.randomUUID(),
-            variantId,
-            locationId,
-            available: level.available || 0,
-          });
-        }
-      }
-    }
   }
 }
 
@@ -667,7 +623,7 @@ function applyFilters(variants: any[], rules: any[]): any[] {
 
 function resolveFilterField(variant: any, field: string): any {
   const product = variant.product;
-  const totalInventory = (variant.inventoryLevels || []).reduce(
+  const totalInventory = variant.inventoryQuantity ?? (variant.inventoryLevels || []).reduce(
     (s: number, l: any) => s + (l.available || 0),
     0,
   );
