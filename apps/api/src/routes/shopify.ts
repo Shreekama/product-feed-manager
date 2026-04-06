@@ -71,6 +71,43 @@ shopifyRoutes.post('/bootstrap', async (c) => {
   return c.json({ ok: true, message: `Store ${shopDomain} registered. You can now trigger a sync.`, storeId });
 });
 
+// ─── GET /debug ───────────────────────────────────────────────────────────────
+// Shows token request result + last sync error in full detail.
+
+shopifyRoutes.get('/debug', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+
+  // 1. Try getting a token
+  let tokenResult: any;
+  try {
+    const res = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        client_id: c.env.SHOPIFY_API_KEY,
+        client_secret: c.env.SHOPIFY_API_SECRET,
+        grant_type: 'client_credentials',
+      }),
+    });
+    const body = await res.text();
+    tokenResult = { status: res.status, ok: res.ok, body };
+  } catch (err: any) {
+    tokenResult = { error: err.message };
+  }
+
+  // 2. Last sync progress from KV
+  const progress = await c.env.MEDIA_KV.get(`sync_progress:${shopDomain}`, 'json');
+
+  // 3. Store record
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { id: true, syncStatus: true, lastSyncAt: true },
+  });
+
+  return c.json({ tokenResult, lastSyncProgress: progress, store });
+});
+
 // ─── GET /install ─────────────────────────────────────────────────────────────
 
 shopifyRoutes.get('/install', (c) => {
