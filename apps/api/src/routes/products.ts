@@ -1,17 +1,29 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { shopifyAuth } from '../middleware/auth';
 import { getDb } from '../db';
 import { products } from '../db/schema';
-import { eq, and, like, or, sql } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
+
+const SHOP_DOMAIN = 'd7f63b.myshopify.com';
 
 export const productRoutes = new Hono<{
   Bindings: Env;
   Variables: { shopDomain: string; storeId: string };
 }>();
 
-// Apply auth guard to all product routes
-productRoutes.use('*', shopifyAuth);
+// Resolve storeId from the hardcoded shop domain — no Shopify session token needed
+// since this is a standalone management UI, not an embedded Shopify app.
+productRoutes.use('*', async (c, next) => {
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN),
+    columns: { id: true },
+  });
+  if (!store) return c.json({ error: 'Store not configured. Run a sync first.' }, 404);
+  c.set('shopDomain', SHOP_DOMAIN);
+  c.set('storeId', store.id);
+  await next();
+});
 
 // ─── GET / ─────────────────────────────────────────────────────────────────────
 
