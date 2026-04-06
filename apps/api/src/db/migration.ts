@@ -219,3 +219,54 @@ CREATE TABLE IF NOT EXISTS google_tokens (
 );
 CREATE INDEX IF NOT EXISTS google_tokens_store_idx ON google_tokens (store_id)
 `;
+
+/**
+ * Schema evolution: columns added after initial deploy.
+ * Each statement is run individually and errors are silently ignored
+ * (SQLite has no ALTER TABLE ... ADD COLUMN IF NOT EXISTS).
+ * Safe to run multiple times.
+ */
+export const ALTER_TABLE_SQL = [
+  // products — columns added in schema expansion
+  `ALTER TABLE products ADD COLUMN description TEXT`,
+  `ALTER TABLE products ADD COLUMN description_html TEXT`,
+  `ALTER TABLE products ADD COLUMN online_store_url TEXT`,
+  `ALTER TABLE products ADD COLUMN total_inventory INTEGER`,
+  `ALTER TABLE products ADD COLUMN tracks_inventory INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE products ADD COLUMN has_only_default_variant INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN has_out_of_stock_variants INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN exclude_from_feeds INTEGER NOT NULL DEFAULT 0`,
+  // variants — columns added in schema expansion
+  `ALTER TABLE variants ADD COLUMN available_for_sale INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE variants ADD COLUMN inventory_quantity INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE variants ADD COLUMN inventory_policy TEXT NOT NULL DEFAULT 'DENY'`,
+  `ALTER TABLE variants ADD COLUMN inventory_management TEXT`,
+  `ALTER TABLE variants ADD COLUMN fulfillment_service TEXT`,
+  `ALTER TABLE variants ADD COLUMN tax_code TEXT`,
+  `ALTER TABLE variants ADD COLUMN option1_name TEXT`,
+  `ALTER TABLE variants ADD COLUMN option1_value TEXT`,
+  `ALTER TABLE variants ADD COLUMN option2_name TEXT`,
+  `ALTER TABLE variants ADD COLUMN option2_value TEXT`,
+  `ALTER TABLE variants ADD COLUMN option3_name TEXT`,
+  `ALTER TABLE variants ADD COLUMN option3_value TEXT`,
+  `ALTER TABLE variants ADD COLUMN image_src TEXT`,
+  `ALTER TABLE variants ADD COLUMN image_alt TEXT`,
+  `ALTER TABLE variants ADD COLUMN inventory_item_id TEXT`,
+  // product_images table (may not exist on older deploys)
+  `CREATE TABLE IF NOT EXISTS product_images (
+    id TEXT PRIMARY KEY,
+    product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    shopify_id TEXT NOT NULL,
+    src TEXT NOT NULL,
+    alt_text TEXT,
+    width INTEGER,
+    height INTEGER,
+    position INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS product_images_product_idx ON product_images (product_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS product_images_shopify_product_unique ON product_images (shopify_id, product_id)`,
+  `CREATE INDEX IF NOT EXISTS product_images_position_idx ON product_images (product_id, position)`,
+  // metafields — variant_id column
+  `ALTER TABLE metafields ADD COLUMN variant_id TEXT REFERENCES variants(id) ON DELETE CASCADE`,
+];
