@@ -358,12 +358,19 @@ async function upsertVariantBatch(
     variantBuffer.map(v => productMap.get(v.parentShopifyId)).filter(Boolean),
   )] as string[];
 
-  const placeholders = productIds.map(() => '?').join(',');
-  const { results: existing } = await env.DB.prepare(
-    `SELECT id, shopify_id, product_id FROM variants WHERE product_id IN (${placeholders})`,
-  ).bind(...productIds).all<{ id: string; shopify_id: string; product_id: string }>();
+  // SQLite caps at 999 bind variables — chunk the IN(...) lookup
+  const CHUNK = 50;
+  const existingRows: { id: string; shopify_id: string; product_id: string }[] = [];
+  for (let i = 0; i < productIds.length; i += CHUNK) {
+    const chunk = productIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const { results } = await env.DB.prepare(
+      `SELECT id, shopify_id, product_id FROM variants WHERE product_id IN (${placeholders})`,
+    ).bind(...chunk).all<{ id: string; shopify_id: string; product_id: string }>();
+    existingRows.push(...results);
+  }
 
-  const existingMap = new Map(existing.map(r => [`${r.shopify_id}:${r.product_id}`, r.id]));
+  const existingMap = new Map(existingRows.map(r => [`${r.shopify_id}:${r.product_id}`, r.id]));
 
   const stmts: D1PreparedStatement[] = [];
   for (const { raw, parentShopifyId } of variantBuffer) {
