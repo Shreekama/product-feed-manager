@@ -23,11 +23,10 @@ export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
   for (const msg of batch.messages) {
     const { type, ...data } = msg.body as any;
     try {
-      if (type === 'bulk-sync') {
-        await handleBulkSync(data, env);
-      } else if (type === 'feed-job') {
-        await handleFeedJob(data, env);
-      }
+      if (type === 'bulk-sync')         await handleBulkSyncStart(data, env);
+      else if (type === 'bulk-sync-poll')    await handleBulkSyncPoll(data, env);
+      else if (type === 'bulk-sync-process') await handleBulkSyncProcess(data, env);
+      else if (type === 'feed-job')          await handleFeedJob(data, env);
       msg.ack();
     } catch (err) {
       console.error(`Queue message failed [${type}]:`, err);
@@ -36,62 +35,120 @@ export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
   }
 };
 
-// ─── Bulk Sync Handler ────────────────────────────────────────────────────────
+// ─── Bulk Sync — Step 1: Submit ───────────────────────────────────────────────
+// Submits the Shopify bulk operation and immediately exits.
+// Sends a 'bulk-sync-poll' message with a short delay to check progress.
 
-const PROGRESS_TTL = 3600; // 1 hour
-
-async function setProgress(env: Env, shopDomain: string, data: object) {
-  await env.MEDIA_KV.put(
-    `sync_progress:${shopDomain}`,
-    JSON.stringify({ ...data, updatedAt: new Date().toISOString() }),
-    { expirationTtl: PROGRESS_TTL },
-  );
-}
-
-async function handleBulkSync(
-  data: { shopDomain: string; storeId: string; accessToken?: string },
+async function handleBulkSyncStart(
+  data: { shopDomain: string; storeId: string },
   env: Env,
 ): Promise<void> {
   const { shopDomain, storeId } = data;
   const db = getDb(env);
   const startedAt = new Date().toISOString();
 
-  console.log(`[${shopDomain}] Starting bulk sync`);
+  console.log(`[${shopDomain}] Submitting bulk operation`);
 
   await Promise.all([
     db.update(stores).set({ syncStatus: 'SYNCING', updatedAt: startedAt }).where(eq(stores.id, storeId)),
     setProgress(env, shopDomain, { phase: 'submitting', processed: 0, startedAt }),
   ]);
 
-  try {
-    // Fetch token inside try so failures are caught and surfaced to KV progress
-    const accessToken = await getShopifyToken(shopDomain, env);
+  const accessToken = await getShopifyToken(shopDomain, env);
 
-    const operationId = await submitBulkOperation(shopDomain, accessToken);
-    await setProgress(env, shopDomain, { phase: 'waiting', processed: 0, startedAt });
+  // If a bulk operation is already running (e.g. from a previous attempt),
+  // skip submission and go straight to polling.
+  const statusQuery = `query { currentBulkOperation { id status errorCode url } }`;
+  const current = await shopifyGraphql(shopDomain, accessToken, statusQuery, {});
+  const existing = current.currentBulkOperation;
 
-    const downloadUrl = await pollBulkOperation(shopDomain, accessToken, operationId);
+  if (existing && ['CREATED', 'RUNNING'].includes(existing.status)) {
+    console.log(`[${shopDomain}] Existing bulk op ${existing.id} still running, polling it`);
+  } else {
+    await submitBulkOperation(shopDomain, accessToken);
+  }
 
-    if (!downloadUrl) {
-      console.warn(`[${shopDomain}] Bulk op returned no data`);
+  await setProgress(env, shopDomain, { phase: 'waiting', processed: 0, startedAt });
+
+  // Hand off to the poll step — runs after 8s to give Shopify time to start
+  await env.FEED_QUEUE.send(
+    { type: 'bulk-sync-poll', shopDomain, storeId, startedAt, attempt: 0 },
+    { delaySeconds: 8 },
+  );
+}
+
+// ─── Bulk Sync — Step 2: Poll ─────────────────────────────────────────────────
+// Checks if the Shopify bulk operation finished.
+// If still running, re-queues itself with a 10s delay (no sleep loop!).
+// If done, sends a 'bulk-sync-process' message with the download URL.
+
+async function handleBulkSyncPoll(
+  data: { shopDomain: string; storeId: string; startedAt: string; attempt: number },
+  env: Env,
+): Promise<void> {
+  const { shopDomain, storeId, startedAt, attempt } = data;
+  const MAX_ATTEMPTS = 72; // 72 × 10s = 12 minutes max wait
+
+  if (attempt >= MAX_ATTEMPTS) {
+    await failSync(env, shopDomain, storeId, 'Bulk operation timed out after 12 minutes', startedAt);
+    return;
+  }
+
+  const accessToken = await getShopifyToken(shopDomain, env);
+  const statusQuery = `query { currentBulkOperation { id status errorCode url objectCount } }`;
+  const result = await shopifyGraphql(shopDomain, accessToken, statusQuery, {});
+  const op = result.currentBulkOperation;
+
+  console.log(`[${shopDomain}] Poll attempt ${attempt}: bulk op status = ${op?.status}`);
+
+  if (op?.status === 'COMPLETED') {
+    if (!op.url) {
       await setProgress(env, shopDomain, { phase: 'done', processed: 0, startedAt });
-      await markSyncDone(db, storeId);
+      await markSyncDone(getDb(env), storeId);
       return;
     }
+    await env.FEED_QUEUE.send({ type: 'bulk-sync-process', shopDomain, storeId, downloadUrl: op.url, startedAt });
+  } else if (op?.status === 'FAILED' || op?.status === 'CANCELED') {
+    await failSync(env, shopDomain, storeId, `Bulk op ${op.status}: ${op.errorCode}`, startedAt);
+  } else {
+    // Still running — re-queue with 10s delay, no sleep
+    await env.FEED_QUEUE.send(
+      { type: 'bulk-sync-poll', shopDomain, storeId, startedAt, attempt: attempt + 1 },
+      { delaySeconds: 10 },
+    );
+  }
+}
 
-    await setProgress(env, shopDomain, { phase: 'processing', processed: 0, startedAt });
+// ─── Bulk Sync — Step 3: Process ──────────────────────────────────────────────
+// Downloads the JSONL result and batch-upserts into D1.
+
+async function handleBulkSyncProcess(
+  data: { shopDomain: string; storeId: string; downloadUrl: string; startedAt: string },
+  env: Env,
+): Promise<void> {
+  const { shopDomain, storeId, downloadUrl, startedAt } = data;
+  const db = getDb(env);
+
+  console.log(`[${shopDomain}] Processing bulk result`);
+  await setProgress(env, shopDomain, { phase: 'processing', processed: 0, startedAt });
+
+  try {
     const processed = await processJsonlStream(downloadUrl, storeId, db, env, shopDomain, startedAt);
     await setProgress(env, shopDomain, { phase: 'done', processed, startedAt });
     await markSyncDone(db, storeId);
-    console.log(`[${shopDomain}] Bulk sync completed — ${processed} products`);
+    console.log(`[${shopDomain}] Sync complete — ${processed} products`);
   } catch (err: any) {
-    console.error(`[${shopDomain}] Bulk sync failed:`, err);
-    await Promise.all([
-      db.update(stores).set({ syncStatus: 'FAILED', updatedAt: new Date().toISOString() }).where(eq(stores.id, storeId)),
-      setProgress(env, shopDomain, { phase: 'failed', error: err.message, startedAt }),
-    ]);
+    await failSync(env, shopDomain, storeId, err.message, startedAt);
     throw err;
   }
+}
+
+async function failSync(env: Env, shopDomain: string, storeId: string, error: string, startedAt: string) {
+  console.error(`[${shopDomain}] Sync failed: ${error}`);
+  await Promise.all([
+    getDb(env).update(stores).set({ syncStatus: 'FAILED', updatedAt: new Date().toISOString() }).where(eq(stores.id, storeId)),
+    setProgress(env, shopDomain, { phase: 'failed', error, startedAt }),
+  ]);
 }
 
 async function submitBulkOperation(
@@ -150,33 +207,6 @@ async function submitBulkOperation(
   return bulkOperation.id;
 }
 
-async function pollBulkOperation(
-  shopDomain: string,
-  accessToken: string,
-  _operationId: string,
-): Promise<string | null> {
-  const statusQuery = `
-    query {
-      currentBulkOperation {
-        id status errorCode url objectCount
-      }
-    }
-  `;
-
-  const maxAttempts = 120; // 6 minutes at 3s intervals
-  for (let i = 0; i < maxAttempts; i++) {
-    await sleep(3000);
-    const result = await shopifyGraphql(shopDomain, accessToken, statusQuery, {});
-    const op = result.currentBulkOperation;
-
-    if (op.status === 'COMPLETED') return op.url;
-    if (['FAILED', 'CANCELED'].includes(op.status)) {
-      throw new Error(`Bulk op ${op.status}: ${op.errorCode}`);
-    }
-  }
-
-  throw new Error('Bulk operation timed out');
-}
 
 async function processJsonlStream(
   downloadUrl: string,
@@ -492,13 +522,7 @@ async function handleFeedJob(
       throw new Error('Feed has no column mappings configured');
     }
 
-    // Fetch all active variants for this store
-    const allVariants = await db.query.variants.findMany({
-      where: (v: any, { eq: e }: any) =>
-        e((v as any).productId, undefined), // placeholder; use join below
-    });
-
-    // Use direct Drizzle query for variants with product join
+    // Fetch all active variants with their products for this store
     const allVariantsWithProducts = await db.query.variants.findMany({
       with: {
         product: {
@@ -719,4 +743,16 @@ async function shopifyGraphql(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function setProgress(
+  env: Env,
+  shopDomain: string,
+  progress: Record<string, any>,
+): Promise<void> {
+  await env.MEDIA_KV.put(
+    `sync_progress:${shopDomain}`,
+    JSON.stringify({ ...progress, updatedAt: new Date().toISOString() }),
+    { expirationTtl: 86400 },
+  );
 }

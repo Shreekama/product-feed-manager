@@ -306,6 +306,27 @@ shopifyRoutes.get('/test', async (c) => {
   return c.json({ ok: true, shop: data.data?.shop?.name, tokenPrefix: token.slice(0, 8) + '…' });
 });
 
+// ─── POST /sync/cancel ────────────────────────────────────────────────────────
+
+shopifyRoutes.post('/sync/cancel', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+  const db = getDb(c.env);
+
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { id: true },
+  });
+
+  if (!store) return c.json({ ok: false, error: 'Store not found' }, 404);
+
+  await Promise.all([
+    db.update(stores).set({ syncStatus: 'IDLE', updatedAt: new Date().toISOString() }).where(eq(stores.id, store.id)),
+    c.env.MEDIA_KV.delete(`sync_progress:${shopDomain}`),
+  ]);
+
+  return c.json({ ok: true, message: 'Sync cancelled — status reset to IDLE' });
+});
+
 // ─── GET /sync/status ─────────────────────────────────────────────────────────
 
 shopifyRoutes.get('/sync/status', async (c) => {
