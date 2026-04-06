@@ -82,30 +82,37 @@ function SyncCard() {
         )}
       </div>
 
-      {(isSyncing || isDone || isFailed) && (
+      {isFailed && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
+          <div className="flex items-center gap-2 text-red-700 text-sm font-medium">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            Sync failed
+          </div>
+          <p className="text-xs text-red-600 font-mono break-all">{progress?.error || 'Unknown error'}</p>
+          <p className="text-xs text-red-500">Check <code className="bg-red-100 px-1 rounded">/api/shopify/debug</code> for full details</p>
+        </div>
+      )}
+
+      {(isSyncing || isDone) && (
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-gray-500">
-            <span className={clsx(isFailed && 'text-red-500')}>
-              {isFailed ? (progress?.error || 'Sync failed') : cfg?.label}
+            <span>
+              {cfg?.label}
               {phase === 'processing' && processed > 0 && (
                 <span className="ml-1 text-gray-400">— {processed} synced</span>
               )}
             </span>
-            {!isFailed && <span>{pct}%</span>}
+            <span>{pct}%</span>
           </div>
           <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden relative">
-            {isFailed ? (
-              <div className="h-full w-full bg-red-400 rounded-full" />
-            ) : (
-              <div
-                className={clsx('h-full rounded-full transition-all duration-700', isDone ? 'bg-green-500' : 'bg-brand-600')}
-                style={{ width: `${pct}%` }}
-              >
-                {cfg?.pulse && (
-                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
-                )}
-              </div>
-            )}
+            <div
+              className={clsx('h-full rounded-full transition-all duration-700', isDone ? 'bg-green-500' : 'bg-brand-600')}
+              style={{ width: `${pct}%` }}
+            >
+              {cfg?.pulse && (
+                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+              )}
+            </div>
           </div>
         </div>
       )}
