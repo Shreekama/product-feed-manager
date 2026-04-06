@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, ShieldCheck } from 'lucide-react';
+import { CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { clsx } from 'clsx';
 
@@ -61,44 +61,7 @@ function SyncCard() {
   const pct       = cfg?.pct ?? 0;
   const processed = progress?.processed ?? 0;
 
-  // ── Needs OAuth authorization ─────────────────────────────────────────────
-  // Status is NOT_CONNECTED when: stores table is empty AND SHOPIFY_STORE_TOKEN
-  // env var is not set. This means the OAuth callback never completed successfully.
-  // Clicking Authorize triggers the OAuth flow using SHOPIFY_API_KEY + SHOPIFY_API_SECRET.
-  if (!syncData || status === 'NOT_CONNECTED' || status === 'NOT_CONFIGURED') {
-    const authorizeUrl = `${API_URL}/shopify/install?shop=${SHOP_DOMAIN}`;
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-medium text-gray-700">Product Sync</h2>
-          <span className="text-xs text-gray-400 font-mono">{SHOP_DOMAIN}</span>
-        </div>
-
-        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-amber-800">Authorization required</p>
-            <p className="text-xs text-amber-700">
-              The app is installed on your store but hasn't received an access token yet.
-              Click <strong>Authorize</strong> to complete the OAuth flow — you'll be redirected to Shopify
-              briefly, then returned here automatically.
-            </p>
-          </div>
-        </div>
-
-        <a
-          href={authorizeUrl}
-          className="inline-flex items-center gap-2 bg-[#008060] hover:bg-[#006e52] text-white px-5 py-2.5 rounded-md text-sm font-medium transition-colors"
-        >
-          <ShieldCheck className="w-4 h-4" />
-          Authorize with Shopify
-          <ExternalLink className="w-3 h-3 opacity-70" />
-        </a>
-      </div>
-    );
-  }
-
-  // ── Authorized — show sync controls ──────────────────────────────────────
+  // ── Show sync controls (token fetched inflight via client credentials) ───
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <div className="flex items-center justify-between">

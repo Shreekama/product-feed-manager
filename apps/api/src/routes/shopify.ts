@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { getDb } from '../db';
 import { stores, webhooks } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { getShopifyToken } from '../services/shopify-auth';
 
 export const shopifyRoutes = new Hono<{ Bindings: Env }>();
 
@@ -228,11 +229,10 @@ shopifyRoutes.get('/callback', async (c) => {
     }
   }
 
-  // Enqueue bulk sync
+  // Enqueue bulk sync — token fetched inflight by consumer
   await c.env.FEED_QUEUE.send({
     type: 'bulk-sync',
     shopDomain: shop,
-    accessToken,
     storeId: finalStoreId,
   });
 
@@ -245,41 +245,26 @@ shopifyRoutes.get('/callback', async (c) => {
 
 shopifyRoutes.get('/test', async (c) => {
   const shopDomain = 'd7f63b.myshopify.com';
-  const db = getDb(c.env);
 
-  const store = await db.query.stores.findFirst({
-    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
-    columns: { accessToken: true },
+  let token: string;
+  try {
+    token = await getShopifyToken(shopDomain, c.env);
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500);
+  }
+
+  const res = await fetch(`https://${shopDomain}/admin/api/2024-04/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: '{ shop { name } }', variables: {} }),
   });
 
-  const token = store?.accessToken || c.env.SHOPIFY_STORE_TOKEN;
-  if (!token) {
-    return c.json({ ok: false, error: 'No token found. Set SHOPIFY_STORE_TOKEN in Cloudflare secrets.' }, 400);
-  }
-
-  const res = await fetch(
-    `https://${shopDomain}/admin/api/2024-04/graphql.json`,
-    {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query: '{ shop { name } }', variables: {} }),
-    },
-  );
-
   const body = await res.text();
-  if (!res.ok) {
-    return c.json({ ok: false, status: res.status, body }, res.status as any);
-  }
+  if (!res.ok) return c.json({ ok: false, status: res.status, body }, res.status as any);
 
   let data: any;
   try { data = JSON.parse(body); } catch { return c.json({ ok: false, error: 'Non-JSON response', body }); }
-
-  if (data.errors?.length) {
-    return c.json({ ok: false, errors: data.errors });
-  }
+  if (data.errors?.length) return c.json({ ok: false, errors: data.errors });
 
   return c.json({ ok: true, shop: data.data?.shop?.name, tokenPrefix: token.slice(0, 8) + '…' });
 });
@@ -296,7 +281,7 @@ shopifyRoutes.get('/sync/status', async (c) => {
   });
 
   if (!store) {
-    return c.json({ status: 'NOT_CONNECTED', lastSyncAt: null, productCount: 0, progress: null });
+    return c.json({ status: 'IDLE', lastSyncAt: null, productCount: 0, progress: null });
   }
 
   const [progress, countRow] = await Promise.all([
@@ -321,13 +306,14 @@ shopifyRoutes.post('/sync', async (c) => {
 
   let store = await db.query.stores.findFirst({
     where: (s, { eq }) => eq(s.shopDomain, shopDomain),
-    columns: { id: true, accessToken: true, syncStatus: true },
+    columns: { id: true, syncStatus: true },
   });
 
+  // Auto-create store record on first sync — token is fetched inflight, not stored
   if (!store) {
-    return c.json({
-      error: 'Not authorized. Click "Authorize with Shopify" in Settings to complete the OAuth flow.',
-    }, 401);
+    const storeId = crypto.randomUUID();
+    await db.insert(stores).values({ id: storeId, shopDomain, accessToken: '', syncStatus: 'IDLE' });
+    store = { id: storeId, syncStatus: 'IDLE' };
   }
 
   if (store.syncStatus === 'SYNCING') {
@@ -337,7 +323,6 @@ shopifyRoutes.post('/sync', async (c) => {
   await c.env.FEED_QUEUE.send({
     type: 'bulk-sync',
     shopDomain,
-    accessToken: store.accessToken,
     storeId: store.id,
   });
 
