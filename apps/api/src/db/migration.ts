@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS products (
   description_html TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   tags TEXT NOT NULL DEFAULT '[]',
+  body_html TEXT,
   online_store_url TEXT,
   published_at TEXT,
   total_inventory INTEGER,
@@ -228,6 +229,7 @@ CREATE INDEX IF NOT EXISTS google_tokens_store_idx ON google_tokens (store_id)
  */
 export const ALTER_TABLE_SQL = [
   // products — columns added in schema expansion
+  `ALTER TABLE products ADD COLUMN body_html TEXT`,
   `ALTER TABLE products ADD COLUMN description TEXT`,
   `ALTER TABLE products ADD COLUMN description_html TEXT`,
   `ALTER TABLE products ADD COLUMN online_store_url TEXT`,
