@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { getDb } from '../db';
 import { stores, webhooks } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { getShopifyToken } from '../services/shopify-auth';
 
 export const shopifyRoutes = new Hono<{ Bindings: Env }>();
 
@@ -228,11 +229,10 @@ shopifyRoutes.get('/callback', async (c) => {
     }
   }
 
-  // Enqueue bulk sync
+  // Enqueue bulk sync — token fetched inflight by consumer
   await c.env.FEED_QUEUE.send({
     type: 'bulk-sync',
     shopDomain: shop,
-    accessToken,
     storeId: finalStoreId,
   });
 
@@ -245,41 +245,26 @@ shopifyRoutes.get('/callback', async (c) => {
 
 shopifyRoutes.get('/test', async (c) => {
   const shopDomain = 'd7f63b.myshopify.com';
-  const db = getDb(c.env);
 
-  const store = await db.query.stores.findFirst({
-    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
-    columns: { accessToken: true },
+  let token: string;
+  try {
+    token = await getShopifyToken(shopDomain, c.env);
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500);
+  }
+
+  const res = await fetch(`https://${shopDomain}/admin/api/2024-04/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: '{ shop { name } }', variables: {} }),
   });
 
-  const token = store?.accessToken || c.env.SHOPIFY_STORE_TOKEN;
-  if (!token) {
-    return c.json({ ok: false, error: 'No token found. Set SHOPIFY_STORE_TOKEN in Cloudflare secrets.' }, 400);
-  }
-
-  const res = await fetch(
-    `https://${shopDomain}/admin/api/2024-04/graphql.json`,
-    {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query: '{ shop { name } }', variables: {} }),
-    },
-  );
-
   const body = await res.text();
-  if (!res.ok) {
-    return c.json({ ok: false, status: res.status, body }, res.status as any);
-  }
+  if (!res.ok) return c.json({ ok: false, status: res.status, body }, res.status as any);
 
   let data: any;
   try { data = JSON.parse(body); } catch { return c.json({ ok: false, error: 'Non-JSON response', body }); }
-
-  if (data.errors?.length) {
-    return c.json({ ok: false, errors: data.errors });
-  }
+  if (data.errors?.length) return c.json({ ok: false, errors: data.errors });
 
   return c.json({ ok: true, shop: data.data?.shop?.name, tokenPrefix: token.slice(0, 8) + '…' });
 });
@@ -296,14 +281,7 @@ shopifyRoutes.get('/sync/status', async (c) => {
   });
 
   if (!store) {
-    // Return NOT_CONFIGURED only if the token env var is also missing
-    const hasToken = !!c.env.SHOPIFY_STORE_TOKEN;
-    return c.json({
-      status: hasToken ? 'IDLE' : 'NOT_CONFIGURED',
-      lastSyncAt: null,
-      productCount: 0,
-      progress: null,
-    });
+    return c.json({ status: 'IDLE', lastSyncAt: null, productCount: 0, progress: null });
   }
 
   const [progress, countRow] = await Promise.all([
@@ -328,26 +306,14 @@ shopifyRoutes.post('/sync', async (c) => {
 
   let store = await db.query.stores.findFirst({
     where: (s, { eq }) => eq(s.shopDomain, shopDomain),
-    columns: { id: true, accessToken: true, syncStatus: true },
+    columns: { id: true, syncStatus: true },
   });
 
-  // Auto-bootstrap: if app is already installed but store record doesn't exist yet,
-  // create it from SHOPIFY_STORE_TOKEN env var (set this in Cloudflare secrets).
+  // Auto-create store record on first sync — token is fetched inflight, not stored
   if (!store) {
-    const token = c.env.SHOPIFY_STORE_TOKEN;
-    if (!token) {
-      return c.json({
-        error: 'Store not registered. Set SHOPIFY_STORE_TOKEN in Cloudflare Worker secrets.',
-      }, 404);
-    }
     const storeId = crypto.randomUUID();
-    await db.insert(stores).values({
-      id: storeId,
-      shopDomain,
-      accessToken: token,
-      syncStatus: 'IDLE',
-    });
-    store = { id: storeId, accessToken: token, syncStatus: 'IDLE' };
+    await db.insert(stores).values({ id: storeId, shopDomain, accessToken: '', syncStatus: 'IDLE' });
+    store = { id: storeId, syncStatus: 'IDLE' };
   }
 
   if (store.syncStatus === 'SYNCING') {
@@ -357,7 +323,6 @@ shopifyRoutes.post('/sync', async (c) => {
   await c.env.FEED_QUEUE.send({
     type: 'bulk-sync',
     shopDomain,
-    accessToken: store.accessToken,
     storeId: store.id,
   });
 

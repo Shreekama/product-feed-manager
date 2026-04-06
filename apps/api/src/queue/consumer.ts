@@ -3,6 +3,7 @@ import { getDb } from '../db';
 import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns, feedSchedules } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
+import { getShopifyToken } from '../services/shopify-auth';
 
 /** Strip everything from '?' onwards in a Shopify CDN URL */
 function stripQuery(url: string | null | undefined): string {
@@ -48,10 +49,12 @@ async function setProgress(env: Env, shopDomain: string, data: object) {
 }
 
 async function handleBulkSync(
-  data: { shopDomain: string; accessToken: string; storeId: string },
+  data: { shopDomain: string; storeId: string; accessToken?: string },
   env: Env,
 ): Promise<void> {
-  const { shopDomain, accessToken, storeId } = data;
+  const { shopDomain, storeId } = data;
+  // Always request a fresh token via client credentials — do not rely on stored token
+  const accessToken = await getShopifyToken(shopDomain, env);
   const db = getDb(env);
   const startedAt = new Date().toISOString();
 
