@@ -53,8 +53,6 @@ async function handleBulkSync(
   env: Env,
 ): Promise<void> {
   const { shopDomain, storeId } = data;
-  // Always request a fresh token via client credentials — do not rely on stored token
-  const accessToken = await getShopifyToken(shopDomain, env);
   const db = getDb(env);
   const startedAt = new Date().toISOString();
 
@@ -66,6 +64,9 @@ async function handleBulkSync(
   ]);
 
   try {
+    // Fetch token inside try so failures are caught and surfaced to KV progress
+    const accessToken = await getShopifyToken(shopDomain, env);
+
     const operationId = await submitBulkOperation(shopDomain, accessToken);
     await setProgress(env, shopDomain, { phase: 'waiting', processed: 0, startedAt });
 
