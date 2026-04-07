@@ -58,8 +58,10 @@ productRoutes.get('/', async (c) => {
     where: and(...conditions),
     with: {
       variants: {
-        with: { inventoryLevels: true },
         orderBy: (v, { asc }) => [asc(v.position)],
+      },
+      images: {
+        orderBy: (img, { asc }) => [asc(img.position)],
       },
       metafields: true,
       collections: {

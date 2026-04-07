@@ -26,7 +26,7 @@ const DEFAULT_GOOGLE_MAPPINGS = [
   { feedColumn: 'g:description', sourceType: 'product', sourceKey: 'description', transform: 'truncate:5000' },
   { feedColumn: 'g:link', sourceType: 'computed', sourceKey: 'product_url', transform: '' },
   { feedColumn: 'g:image_link', sourceType: 'computed', sourceKey: 'image_url', transform: '' },
-  { feedColumn: 'g:price', sourceType: 'variant', sourceKey: 'price', transform: 'append: USD' },
+  { feedColumn: 'g:price', sourceType: 'variant', sourceKey: 'price', transform: 'append: INR' },
   { feedColumn: 'g:availability', sourceType: 'computed', sourceKey: 'availability', transform: '' },
   { feedColumn: 'g:brand', sourceType: 'product', sourceKey: 'vendor', transform: '' },
   { feedColumn: 'g:gtin', sourceType: 'variant', sourceKey: 'barcode', transform: '' },
