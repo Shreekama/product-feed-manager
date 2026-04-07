@@ -545,12 +545,12 @@ export default function ProductsPage() {
 
   // Selected product IDs for bulk ops
   const selectedProductIds = useMemo(() => {
-    return [...new Set(
+    return Array.from(new Set(
       Object.keys(rowSelection)
         .filter((vId) => rowSelection[vId])
         .map((vId) => rows.find((r) => r.variantId === vId)?.productId)
         .filter(Boolean) as string[],
-    )];
+    ));
   }, [rowSelection, rows]);
 
   // Header drag-to-reorder
