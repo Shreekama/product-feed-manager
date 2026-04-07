@@ -8,7 +8,6 @@ import {
   Package,
   Rss,
   Settings,
-  RefreshCw,
   Image,
 } from 'lucide-react';
 
@@ -26,9 +25,14 @@ export function Sidebar() {
   return (
     <aside className="w-56 shrink-0 bg-white border-r border-gray-200 flex flex-col">
       {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-gray-200">
-        <RefreshCw className="w-5 h-5 text-brand-600 mr-2" />
-        <span className="font-semibold text-sm">Feed Manager</span>
+      <div className="h-14 flex items-center px-4 border-b border-gray-200 gap-2">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="https://www.shreekama.com/cdn/shop/files/Shreekama_Logo_Dark.png"
+          alt="Shreekama"
+          className="h-6 object-contain shrink-0"
+        />
+        <span className="font-semibold text-sm leading-tight">Feed Manager</span>
       </div>
 
       {/* Nav */}

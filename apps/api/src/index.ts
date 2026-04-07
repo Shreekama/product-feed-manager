@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { Env } from './types';
 import { MIGRATION_SQL, ALTER_TABLE_SQL } from './db/migration';
+import { getDb } from './db';
 import { shopifyRoutes } from './routes/shopify';
 import { webhookRoutes } from './routes/webhooks';
 import { productRoutes } from './routes/products';
@@ -34,6 +35,90 @@ app.route('/api/media', mediaRoutes);
 app.route('/api/auth', authRoutes);
 
 app.get('/api/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }));
+
+// ─── Activity logs ─────────────────────────────────────────────────────────────
+app.get('/api/logs', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+  const db = getDb(c.env);
+
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { id: true, lastSyncAt: true, syncStatus: true },
+  });
+
+  if (!store) return c.json({ events: [] });
+
+  // Sync progress from KV
+  const syncProgress = await c.env.MEDIA_KV.get<any>(`sync_progress:${shopDomain}`, 'json');
+
+  // All feed runs joined with feed name via raw SQL (simpler than drizzle inArray for D1)
+  const { results: runs } = await c.env.DB.prepare(`
+    SELECT fr.id, fr.feed_id, fr.status, fr.records_processed, fr.records_skipped,
+           fr.output_url, fr.error_message, fr.started_at, fr.completed_at, fr.duration_ms,
+           f.name as feed_name, f.platform
+    FROM feed_runs fr
+    JOIN feeds f ON fr.feed_id = f.id
+    WHERE f.store_id = ?
+    ORDER BY fr.started_at DESC
+    LIMIT 50
+  `).bind(store.id).all<any>();
+
+  type LogEvent = { type: string; time: string; message: string; status: string; detail?: string };
+  const events: LogEvent[] = [];
+
+  // Current sync state
+  if (syncProgress) {
+    const phase = syncProgress.phase as string;
+    const msg = phase === 'done'
+      ? `Sync completed — ${syncProgress.processed ?? 0} products imported`
+      : phase === 'failed'
+      ? `Sync failed: ${syncProgress.error ?? 'unknown error'}`
+      : phase === 'processing'
+      ? `Sync processing — ${syncProgress.processed ?? 0} products`
+      : phase === 'waiting'
+      ? 'Shopify preparing bulk export…'
+      : 'Sync submitting to Shopify…';
+    events.push({
+      type: 'sync',
+      time: syncProgress.updatedAt || syncProgress.startedAt,
+      message: msg,
+      status: phase === 'done' ? 'success' : phase === 'failed' ? 'error' : 'info',
+    });
+  }
+
+  // Last successful sync from store record (only if different from progress)
+  if (store.lastSyncAt && (!syncProgress || syncProgress.phase !== 'done')) {
+    events.push({
+      type: 'sync',
+      time: store.lastSyncAt,
+      message: 'Sync completed successfully',
+      status: 'success',
+    });
+  }
+
+  // Feed run events
+  for (const run of runs) {
+    const dur = run.duration_ms ? ` in ${(run.duration_ms / 1000).toFixed(1)}s` : '';
+    const records = run.records_processed != null ? ` — ${run.records_processed} rows` : '';
+    const msg = run.status === 'SUCCESS'
+      ? `Feed "${run.feed_name}" (${run.platform}) completed${records}${dur}`
+      : run.status === 'FAILED'
+      ? `Feed "${run.feed_name}" failed: ${run.error_message ?? 'unknown'}`
+      : run.status === 'RUNNING'
+      ? `Feed "${run.feed_name}" running…`
+      : `Feed "${run.feed_name}" queued`;
+    events.push({
+      type: 'feed',
+      time: run.completed_at || run.started_at,
+      message: msg,
+      status: run.status === 'SUCCESS' ? 'success' : run.status === 'FAILED' ? 'error' : 'info',
+      detail: run.output_url ?? undefined,
+    });
+  }
+
+  events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+  return c.json({ events: events.slice(0, 100) });
+});
 
 // ─── One-time DB setup ────────────────────────────────────────────────────────
 // Visit /api/setup once in your browser to create all tables.

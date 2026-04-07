@@ -1,17 +1,29 @@
 import { Hono } from 'hono';
 import { Cron } from 'croner';
 import type { Env } from '../types';
-import { shopifyAuth } from '../middleware/auth';
 import { getDb } from '../db';
 import { feeds, feedSchedules, feedRuns } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
+
+const SHOP_DOMAIN = 'd7f63b.myshopify.com';
 
 export const feedRoutes = new Hono<{
   Bindings: Env;
   Variables: { shopDomain: string; storeId: string };
 }>();
 
-feedRoutes.use('*', shopifyAuth);
+// Resolve store from hardcoded domain — standalone app, no Shopify session token needed
+feedRoutes.use('*', async (c, next) => {
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN),
+    columns: { id: true },
+  });
+  if (!store) return c.json({ error: 'Store not configured. Run a sync first.' }, 404);
+  c.set('shopDomain', SHOP_DOMAIN);
+  c.set('storeId', store.id);
+  await next();
+});
 
 // ─── GET /dashboard ───────────────────────────────────────────────────────────
 
