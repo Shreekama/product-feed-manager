@@ -3,7 +3,7 @@ import type { Env } from '../types';
 
 export interface ColumnMapping {
   feedColumn: string;
-  sourceType: 'product' | 'variant' | 'metafield' | 'computed';
+  sourceType: 'product' | 'variant' | 'metafield' | 'computed' | 'fixed';
   sourceKey: string;
   transform?: string;
 }
@@ -46,6 +46,10 @@ export async function buildRow(
           break;
         case 'computed':
           value = resolveComputed(mapping.sourceKey, variant, product, totalInventory, shopDomain);
+          break;
+        case 'fixed':
+          // sourceKey is used as a literal value; if blank, nothing is written
+          value = mapping.sourceKey || '';
           break;
       }
     } catch {
@@ -180,6 +184,18 @@ function applyTransform(value: string, transform?: string): string {
     }
     case 'default':
       return value || args[0] || '';
+    case 'map': {
+      // format: map:From1=To1|From2=To2  (case-insensitive match)
+      const pairs = args.join(':').split('|');
+      for (const pair of pairs) {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx === -1) continue;
+        const from = pair.slice(0, eqIdx).trim();
+        const to   = pair.slice(eqIdx + 1);
+        if (value.toLowerCase() === from.toLowerCase()) return to;
+      }
+      return value; // no matching rule — pass through unchanged
+    }
     default:
       return value;
   }

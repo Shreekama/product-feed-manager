@@ -11,7 +11,7 @@ import Link from 'next/link';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 const PLATFORMS = ['GOOGLE', 'FACEBOOK', 'PINTEREST'];
 const OUTPUT_TYPES = ['CSV', 'XML', 'GOOGLE_SHEETS'];
-const SOURCE_TYPES = ['product', 'variant', 'metafield', 'computed'];
+const SOURCE_TYPES = ['product', 'variant', 'metafield', 'computed', 'fixed'];
 
 const COMPUTED_KEYS = [
   'image_url', 'all_images', 'image_url_2', 'image_url_3',
@@ -21,6 +21,26 @@ const PRODUCT_KEYS = ['title', 'vendor', 'product_type', 'handle', 'tags', 'desc
 const VARIANT_KEYS = [
   'sku', 'price', 'compare_at_price', 'barcode',
   'option1', 'option2', 'option3', 'weight', 'weight_unit', 'inventory', 'taxable',
+];
+
+const FILTER_FIELDS = [
+  { value: 'product_type', label: 'Product Type' },
+  { value: 'vendor',       label: 'Vendor' },
+  { value: 'availability', label: 'Availability' },
+  { value: 'status',       label: 'Status' },
+  { value: 'sku',          label: 'SKU' },
+  { value: 'price',        label: 'Price' },
+  { value: 'inventory',    label: 'Inventory' },
+];
+const FILTER_OPERATORS = [
+  { value: 'in',       label: 'is one of' },
+  { value: 'eq',       label: 'equals' },
+  { value: 'neq',      label: 'not equals' },
+  { value: 'contains', label: 'contains' },
+  { value: 'gt',       label: '>' },
+  { value: 'lt',       label: '<' },
+  { value: 'gte',      label: '>=' },
+  { value: 'lte',      label: '<=' },
 ];
 
 function getSourceKeys(sourceType: string): string[] {
@@ -41,7 +61,7 @@ const DEFAULT_GOOGLE_MAPPINGS = [
   { feedColumn: 'g:availability', sourceType: 'computed', sourceKey: 'availability', transform: ''             },
   { feedColumn: 'g:brand',        sourceType: 'product',  sourceKey: 'vendor',       transform: ''             },
   { feedColumn: 'g:gtin',         sourceType: 'variant',  sourceKey: 'barcode',      transform: ''             },
-  { feedColumn: 'g:condition',    sourceType: 'product',  sourceKey: 'title',        transform: 'default:new'  },
+  { feedColumn: 'g:condition',    sourceType: 'fixed',    sourceKey: 'new',          transform: ''             },
 ];
 
 export default function NewFeedPage() {
@@ -69,12 +89,15 @@ export default function NewFeedPage() {
       googleSheetId:   '',
       googleSheetTab:  'Feed',
       columnMappings:  DEFAULT_GOOGLE_MAPPINGS,
+      filterRules:     [] as { field: string; operator: string; value: string }[],
       scheduleEnabled: false,
       cronExpr:        '0 */6 * * *',
     },
   });
 
-  const { fields, append, remove } = useFieldArray({ control, name: 'columnMappings' });
+  const { fields, append, remove }                            = useFieldArray({ control, name: 'columnMappings' });
+  const { fields: filterFields, append: appendFilter,
+          remove: removeFilter }                              = useFieldArray({ control, name: 'filterRules' });
   const scheduleEnabled  = watch('scheduleEnabled');
   const watchedMappings  = watch('columnMappings');
 
@@ -93,6 +116,7 @@ export default function NewFeedPage() {
         googleSheetId:  data.googleSheetId  || null,
         googleSheetTab: data.googleSheetTab || null,
         columnMappings: data.columnMappings,
+        filterRules:    data.filterRules,
         ...(data.scheduleEnabled && { schedule: { cronExpr: data.cronExpr } }),
       });
       router.push('/feeds');
@@ -197,6 +221,68 @@ export default function NewFeedPage() {
           )}
         </section>
 
+        {/* Filter Rules */}
+        <section className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-medium text-gray-700">Product Filters</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Only products matching ALL rules will be included in the feed.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => appendFilter({ field: 'product_type', operator: 'in', value: '' })}
+              className="inline-flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-md"
+            >
+              <Plus className="w-3 h-3" /> Add Filter
+            </button>
+          </div>
+
+          {filterFields.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">No filters — all active products will be included.</p>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-[1.5fr_1.2fr_2fr_auto] gap-2 text-xs font-medium text-gray-500 px-1">
+                <span>Field</span>
+                <span>Operator</span>
+                <span>Value(s) — comma separated for "is one of"</span>
+                <span />
+              </div>
+              {filterFields.map((f, i) => (
+                <div key={f.id} className="grid grid-cols-[1.5fr_1.2fr_2fr_auto] gap-2 items-center">
+                  <select
+                    {...register(`filterRules.${i}.field`)}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs"
+                  >
+                    {FILTER_FIELDS.map((ff) => (
+                      <option key={ff.value} value={ff.value}>{ff.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    {...register(`filterRules.${i}.operator`)}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs"
+                  >
+                    {FILTER_OPERATORS.map((op) => (
+                      <option key={op.value} value={op.value}>{op.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    {...register(`filterRules.${i}.value`)}
+                    placeholder='e.g. Lehenga, Gown, Co-ordset'
+                    className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeFilter(i)}
+                    className="text-red-400 hover:text-red-600 p-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* Column Mappings */}
         <section className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex items-center justify-between mb-4">
@@ -214,7 +300,7 @@ export default function NewFeedPage() {
             <div className="grid grid-cols-[2fr_1fr_2fr_1.5fr_auto] gap-2 text-xs font-medium text-gray-500 px-1">
               <span>Feed Column</span>
               <span>Source Type</span>
-              <span>Source Key</span>
+              <span>Source Key / Value</span>
               <span>Transform</span>
               <span />
             </div>
@@ -235,10 +321,10 @@ export default function NewFeedPage() {
                   >
                     {SOURCE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
-                  {srcType === 'metafield' ? (
+                  {srcType === 'metafield' || srcType === 'fixed' ? (
                     <input
                       {...register(`columnMappings.${i}.sourceKey`)}
-                      placeholder="namespace.key"
+                      placeholder={srcType === 'fixed' ? 'literal value to output' : 'namespace.key'}
                       className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
                   ) : (
@@ -252,7 +338,7 @@ export default function NewFeedPage() {
                   )}
                   <input
                     {...register(`columnMappings.${i}.transform`)}
-                    placeholder="e.g. uppercase"
+                    placeholder="e.g. map:Lehenga=Apparel"
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
                   />
                   <button type="button" onClick={() => remove(i)} className="text-red-400 hover:text-red-600 p-1">
@@ -262,6 +348,9 @@ export default function NewFeedPage() {
               );
             })}
           </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Transforms: <code>uppercase</code>, <code>lowercase</code>, <code>truncate:150</code>, <code>append: INR</code>, <code>default:new</code>, <code>map:From=To|From2=To2</code>
+          </p>
         </section>
 
         {/* Schedule */}

@@ -5,7 +5,7 @@ import { feedsApi } from '../../lib/api';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import { parseDate } from '../../lib/dates';
-import { Plus, Play, Pencil, Trash2, Clock } from 'lucide-react';
+import { Plus, Play, Pencil, Clock } from 'lucide-react';
 import { clsx } from 'clsx';
 
 const PLATFORM_BADGE: Record<string, string> = {
@@ -50,11 +50,6 @@ export default function FeedsPage() {
   const { data: feeds = [], isLoading } = useQuery({
     queryKey: ['feeds'],
     queryFn: feedsApi.list,
-  });
-
-  const deleteFeed = useMutation({
-    mutationFn: (id: string) => feedsApi.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['feeds'] }),
   });
 
   const triggerRun = useMutation({
@@ -147,12 +142,6 @@ export default function FeedsPage() {
                   >
                     <Pencil className="w-3 h-3" /> Edit
                   </Link>
-                  <button
-                    onClick={() => { if (confirm(`Delete feed "${feed.name}"?`)) deleteFeed.mutate(feed.id); }}
-                    className="inline-flex items-center text-xs text-red-400 hover:text-red-600 px-2 py-1.5 rounded-md transition-colors"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
                 </div>
               </div>
             );

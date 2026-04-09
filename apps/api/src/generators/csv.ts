@@ -24,8 +24,8 @@ export async function generateCsv(
     httpMetadata: { contentType: 'text/csv; charset=utf-8' },
   });
 
-  // Construct public URL (assumes bucket has public access or a custom domain)
-  const publicUrl = `https://feeds.r2.dev/${key}`;
+  // Serve via Worker endpoint — avoids the broken feeds.r2.dev URL
+  const publicUrl = `/api/feeds/file?key=${encodeURIComponent(key)}`;
 
   return { r2Key: key, publicUrl, rowCount: rows.length };
 }
