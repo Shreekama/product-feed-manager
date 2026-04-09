@@ -325,6 +325,7 @@ function GuideTab() {
               ['variant',   'Fields from each variant (sku, price, barcode, options, etc.)'],
               ['computed',  'Values built automatically from product + variant data (see below)'],
               ['metafield', 'Custom metafields — enter key as namespace.key (e.g. custom.material)'],
+              ['fixed',     'A literal value you type in — the same text is written for every row. Leave blank to output nothing for that column.'],
             ].map(([type, desc]) => (
               <div key={type} className="flex gap-3">
                 <code className="shrink-0 text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded self-start">{type}</code>
@@ -371,12 +372,56 @@ function GuideTab() {
               ['append: INR',   'Append text after the value — e.g. "1999" → "1999 INR"'],
               ['prepend:₹',     'Prepend text before the value — e.g. "1999" → "₹1999"'],
               ['default:new',   'Use "new" if the field is empty or null'],
+              ['map:A=B|C=D',   'Replace a value with another. Separate multiple rules with |. Case-insensitive match. If no rule matches, the original value is kept.'],
             ].map(([formula, desc]) => (
               <div key={formula} className="flex gap-3">
                 <code className="shrink-0 text-xs bg-orange-50 text-orange-700 px-2 py-0.5 rounded self-start min-w-[140px]">{formula}</code>
                 <span className="text-xs text-gray-600">{desc}</span>
               </div>
             ))}
+          </div>
+
+          {/* map: transform deep-dive */}
+          <div className="mt-4 bg-orange-50 border border-orange-100 rounded-lg p-4 space-y-3">
+            <p className="text-xs font-semibold text-orange-800">Map transform — value remapping</p>
+            <p className="text-xs text-orange-700">
+              Use <code className="bg-white/70 px-1 rounded">map:</code> to translate product values into the labels your feed platform expects.
+              Separate each rule with <code className="bg-white/70 px-1 rounded">|</code> and each pair with <code className="bg-white/70 px-1 rounded">=</code>.
+              Matching is case-insensitive. If no rule matches, the original value is passed through unchanged.
+            </p>
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-orange-800">Example — map Product Type to Google category:</p>
+              <div className="rounded border border-orange-200 bg-white overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-orange-50 border-b border-orange-100">
+                    <tr>
+                      {['Feed Column', 'Source Type', 'Source Key', 'Transform'].map((h) => (
+                        <th key={h} className="text-left px-3 py-1.5 font-medium text-orange-700">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="px-3 py-2 font-mono text-brand-700">g:google_product_category</td>
+                      <td className="px-3 py-2 text-gray-500">product</td>
+                      <td className="px-3 py-2 font-mono text-gray-600">product_type</td>
+                      <td className="px-3 py-2 font-mono text-gray-600 break-all">map:co-ord set=Apparel {'>'} Co-Ord Set|Lehenga=Apparel {'>'} Lehenga</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-orange-700">
+                This reads the product's <strong>Product Type</strong> field and:
+              </p>
+              <ul className="text-xs text-orange-700 space-y-0.5 list-disc list-inside ml-1">
+                <li><strong>co-ord set</strong> → <code className="bg-white/70 px-1 rounded">Apparel &gt; Co-Ord Set</code></li>
+                <li><strong>Lehenga</strong> → <code className="bg-white/70 px-1 rounded">Apparel &gt; Lehenga</code></li>
+                <li>Any other value → passed through as-is</li>
+              </ul>
+              <p className="text-xs text-orange-600">
+                Add more product types by appending <code className="bg-white/70 px-1 rounded">|ProductType=Category</code> to the transform string.
+              </p>
+            </div>
           </div>
         </section>
 
@@ -430,7 +475,7 @@ function GuideTab() {
                   ['g:availability', 'computed', 'availability', ''],
                   ['g:brand',        'product',  'vendor',       ''],
                   ['g:gtin',         'variant',  'barcode',      ''],
-                  ['g:condition',    'product',  'title',        'default:new'],
+                  ['g:condition',    'fixed',    'new',          ''],
                 ].map(([col, src, key, transform]) => (
                   <tr key={col} className="hover:bg-gray-50">
                     <td className="px-3 py-1.5 font-mono font-medium text-brand-700">{col}</td>
