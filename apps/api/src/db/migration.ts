@@ -268,4 +268,6 @@ export const ALTER_TABLE_SQL = [
   `CREATE INDEX IF NOT EXISTS product_images_position_idx ON product_images (product_id, position)`,
   // metafields — variant_id column
   `ALTER TABLE metafields ADD COLUMN variant_id TEXT REFERENCES variants(id) ON DELETE CASCADE`,
+  // stores — custom storefront domain
+  `ALTER TABLE stores ADD COLUMN primary_domain TEXT`,
 ];
