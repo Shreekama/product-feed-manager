@@ -243,6 +243,73 @@ function LogsTab() {
   );
 }
 
+// ── Store settings card ───────────────────────────────────────────────────────
+
+function StoreSettingsCard() {
+  const [domain, setDomain] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved]   = useState(false);
+  const [error, setError]   = useState('');
+
+  useEffect(() => {
+    fetch(`${API_URL}/shopify/store-settings`)
+      .then((r) => r.json())
+      .then((d: any) => setDomain(d.primaryDomain || ''))
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const res = await fetch(`${API_URL}/shopify/store-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primaryDomain: domain }),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      const data = await res.json() as any;
+      setDomain(data.primaryDomain || '');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      <h2 className="font-medium text-gray-700">Store Settings</h2>
+      <div>
+        <label className="block text-sm font-medium text-gray-600 mb-1">
+          Custom Storefront Domain
+        </label>
+        <div className="flex gap-2">
+          <input
+            value={domain}
+            onChange={(e) => setDomain(e.target.value)}
+            placeholder="www.shreekama.com"
+            className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <button
+            onClick={save}
+            disabled={saving}
+            className="px-4 py-2 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Used in product links in feed output. Leave blank to use the Shopify domain.
+        </p>
+        {saved && <p className="text-xs text-green-600 mt-1">Saved!</p>}
+        {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
 // ── Google Sheets card ────────────────────────────────────────────────────────
 
 function GoogleCard() {
@@ -542,6 +609,7 @@ function SettingsInner() {
       {tab === 'general' && (
         <>
           <SyncCard />
+          <StoreSettingsCard />
           <GoogleCard />
         </>
       )}

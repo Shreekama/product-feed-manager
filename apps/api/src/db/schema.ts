@@ -14,6 +14,7 @@ export const stores = sqliteTable('stores', {
   id: text('id').primaryKey(),
   shopDomain: text('shop_domain').notNull().unique(),
   accessToken: text('access_token').notNull(),
+  primaryDomain: text('primary_domain'), // custom storefront domain, e.g. www.shreekama.com
   syncStatus: text('sync_status').notNull().default('IDLE'),
   lastSyncAt: text('last_sync_at'),
   createdAt: text('created_at').notNull().default("(datetime('now'))"),

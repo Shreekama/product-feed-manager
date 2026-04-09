@@ -517,7 +517,7 @@ async function handleFeedJob(
 
     const store = await db.query.stores.findFirst({
       where: (s, { eq: e }) => e(s.id, storeId),
-      columns: { shopDomain: true },
+      columns: { shopDomain: true, primaryDomain: true },
     });
 
     if (!store) throw new Error(`Store ${storeId} not found`);
@@ -564,7 +564,7 @@ async function handleFeedJob(
       const batch = filtered.slice(i, i + BATCH_SIZE);
       const batchRows = await Promise.all(
         batch.map((variant) =>
-          buildRow(variant, columnMappings, mediaMap, env, store.shopDomain),
+          buildRow(variant, columnMappings, mediaMap, env, store.primaryDomain || store.shopDomain),
         ),
       );
       rows.push(...batchRows);

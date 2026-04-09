@@ -327,6 +327,41 @@ shopifyRoutes.post('/sync/cancel', async (c) => {
   return c.json({ ok: true, message: 'Sync cancelled — status reset to IDLE' });
 });
 
+// ─── GET /store-settings ──────────────────────────────────────────────────────
+
+shopifyRoutes.get('/store-settings', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { primaryDomain: true },
+  });
+  return c.json({ primaryDomain: store?.primaryDomain || '' });
+});
+
+// ─── PUT /store-settings ──────────────────────────────────────────────────────
+
+shopifyRoutes.put('/store-settings', async (c) => {
+  const shopDomain = 'd7f63b.myshopify.com';
+  const db = getDb(c.env);
+  const { primaryDomain } = await c.req.json<{ primaryDomain: string }>();
+
+  // Normalise: strip protocol and trailing slash
+  const cleaned = (primaryDomain || '').replace(/^https?:\/\//, '').replace(/\/$/, '').trim();
+
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
+    columns: { id: true },
+  });
+  if (!store) return c.json({ error: 'Store not found' }, 404);
+
+  await db.update(stores)
+    .set({ primaryDomain: cleaned || null, updatedAt: new Date().toISOString() })
+    .where(eq(stores.id, store.id));
+
+  return c.json({ primaryDomain: cleaned });
+});
+
 // ─── GET /sync/status ─────────────────────────────────────────────────────────
 
 shopifyRoutes.get('/sync/status', async (c) => {
