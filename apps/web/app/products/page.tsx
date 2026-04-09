@@ -14,6 +14,7 @@ import {
   type VisibilityState,
 } from '@tanstack/react-table';
 import { productsApi } from '../../lib/api';
+import { parseDate } from '../../lib/dates';
 import {
   Search, ChevronLeft, ChevronRight, RefreshCw, Settings2,
   ChevronUp, ChevronDown, ChevronsUpDown, Check, X,
@@ -160,7 +161,7 @@ function SyncBanner() {
         )}
         {data?.lastSyncAt && !isSyncing && (
           <span className="text-gray-400 text-xs">
-            Last sync {formatDistanceToNow(new Date(data.lastSyncAt), { addSuffix: true })}
+            Last sync {parseDate(data.lastSyncAt) ? formatDistanceToNow(parseDate(data.lastSyncAt)!, { addSuffix: true }) : ''}
           </span>
         )}
         {isSyncing && phase && (

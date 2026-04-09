@@ -8,6 +8,7 @@ import {
   ScrollText, Settings, BookOpen,
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
+import { parseDate } from '../../lib/dates';
 import { clsx } from 'clsx';
 
 const SHOP_DOMAIN = 'd7f63b.myshopify.com';
@@ -87,9 +88,9 @@ function SyncCard() {
           <span className="font-semibold">{syncData?.productCount ?? '—'}</span>
           <span className="text-gray-400">products</span>
         </div>
-        {syncData?.lastSyncAt && !isSyncing && (
+        {syncData?.lastSyncAt && !isSyncing && parseDate(syncData.lastSyncAt) && (
           <span className="text-gray-400 text-xs">
-            Last sync: {formatDistanceToNow(new Date(syncData.lastSyncAt), { addSuffix: true })}
+            Last sync: {formatDistanceToNow(parseDate(syncData.lastSyncAt)!, { addSuffix: true })}
           </span>
         )}
       </div>
@@ -258,6 +259,7 @@ function GoogleCard() {
   });
 
   const googleConnected = googleStatus?.connected || justConnected;
+  const googleEmail = googleStatus?.email || null;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
@@ -265,7 +267,11 @@ function GoogleCard() {
 
       {googleConnected ? (
         <div className="flex items-center gap-2 text-green-600 text-sm">
-          <CheckCircle className="w-4 h-4" /> Google account connected
+          <CheckCircle className="w-4 h-4" />
+          Google account connected
+          {googleEmail && (
+            <span className="text-gray-500 font-normal">({googleEmail})</span>
+          )}
         </div>
       ) : (
         <p className="text-sm text-gray-500">

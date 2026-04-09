@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { clsx } from 'clsx';
+import { parseDate } from '../../../lib/dates';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 const OUTPUT_TYPES = ['CSV', 'XML', 'GOOGLE_SHEETS'];
@@ -54,10 +55,12 @@ function FeedEditInner() {
   const qc = useQueryClient();
   const id = searchParams.get('id') ?? '';
 
-  const [saving, setSaving]     = useState(false);
+  const [saving, setSaving]       = useState(false);
   const [saveError, setSaveError] = useState('');
-  const [savedOk, setSavedOk]   = useState(false);
+  const [savedOk, setSavedOk]     = useState(false);
   const [formReady, setFormReady] = useState(false);
+  const [sheetTitle, setSheetTitle] = useState<string | null>(null);
+  const [sheetChecking, setSheetChecking] = useState(false);
 
   // ── Feed data ──────────────────────────────────────────────────────────────
   const { data: feed, isLoading } = useQuery({
@@ -108,6 +111,32 @@ function FeedEditInner() {
   const { fields, append, remove } = useFieldArray({ control, name: 'columnMappings' });
   const scheduleEnabled  = watch('scheduleEnabled');
   const watchedMappings  = watch('columnMappings');
+  const watchedSheetId   = watch('googleSheetId');
+
+  // Verify the sheet ID whenever it changes (debounced)
+  useEffect(() => {
+    const trimmed = (watchedSheetId || '').trim();
+    if (!trimmed) { setSheetTitle(null); return; }
+    // Skip verification if it came from the dropdown (already verified by the list)
+    if (googleSheets.some((s) => s.id === trimmed)) {
+      setSheetTitle(googleSheets.find((s) => s.id === trimmed)?.name || null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setSheetChecking(true);
+      try {
+        const res = await fetch(`${API_URL}/auth/google/sheet-info?sheetId=${encodeURIComponent(trimmed)}`);
+        if (res.ok) {
+          const data = await res.json() as any;
+          setSheetTitle(data.title || null);
+        } else {
+          setSheetTitle(null);
+        }
+      } catch { setSheetTitle(null); }
+      finally { setSheetChecking(false); }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [watchedSheetId, googleSheets]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Populate form when feed loads (once)
   useEffect(() => {
@@ -254,6 +283,20 @@ function FeedEditInner() {
               />
             </div>
           </div>
+          {/* Sheet verification badge */}
+          {watchedSheetId && (
+            <div className="text-xs">
+              {sheetChecking ? (
+                <span className="text-gray-400">Checking sheet…</span>
+              ) : sheetTitle ? (
+                <span className="text-green-600 flex items-center gap-1">
+                  <CheckCircle className="w-3.5 h-3.5" /> {sheetTitle}
+                </span>
+              ) : (
+                <span className="text-red-500">Sheet not found or no access</span>
+              )}
+            </div>
+          )}
           {googleSheets.length === 0 && (
             <p className="text-xs text-gray-400">
               Connect Google in{' '}
@@ -423,7 +466,7 @@ function FeedEditInner() {
                       {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
                     </td>
                     <td className="py-2 px-2 text-gray-500">
-                      {run.startedAt ? format(new Date(run.startedAt), 'MMM d HH:mm:ss') : '—'}
+                      {(() => { const d = parseDate(run.startedAt); return d ? format(d, 'MMM d HH:mm:ss') : '—'; })()}
                     </td>
                     <td className="py-2 px-2 text-xs">
                       {run.outputUrl ? (
