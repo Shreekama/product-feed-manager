@@ -658,10 +658,14 @@ function applyFilters(variants: any[], rules: any[]): any[] {
 
 function resolveFilterField(variant: any, field: string): any {
   const product = variant.product;
-  const totalInventory = variant.inventoryQuantity ?? (variant.inventoryLevels || []).reduce(
-    (s: number, l: any) => s + (l.available || 0),
-    0,
-  );
+  // inventoryLevels table is not populated by the bulk sync,
+  // so use inventoryQuantity (synced from Shopify) as the primary source.
+  const totalInventory = variant.inventoryQuantity > 0
+    ? variant.inventoryQuantity
+    : (variant.inventoryLevels || []).reduce(
+        (s: number, l: any) => s + (l.available || 0),
+        0,
+      );
 
   const fieldMap: Record<string, any> = {
     vendor: product?.vendor,
@@ -670,7 +674,7 @@ function resolveFilterField(variant: any, field: string): any {
     sku: variant.sku,
     price: parseFloat(variant.price),
     inventory: totalInventory,
-    availability: totalInventory > 0 ? 'in stock' : 'out of stock',
+    availability: (totalInventory > 0 || variant.availableForSale === true) ? 'in stock' : 'out of stock',
   };
   return fieldMap[field] ?? null;
 }
