@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { feedsApi } from '../lib/api';
 import { format } from 'date-fns';
+import { parseDate } from '../lib/dates';
 import { CheckCircle, XCircle, Clock, Play, Rss } from 'lucide-react';
 import Link from 'next/link';
 
@@ -88,13 +89,13 @@ export default function DashboardPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-500">
-                    {feed.lastRun?.completedAt
-                      ? format(new Date(feed.lastRun.completedAt), 'MMM d, HH:mm')
+                    {feed.lastRun?.completedAt && parseDate(feed.lastRun.completedAt)
+                      ? format(parseDate(feed.lastRun.completedAt)!, 'MMM d, HH:mm')
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-500">
-                    {feed.nextRun
-                      ? format(new Date(feed.nextRun), 'MMM d, HH:mm')
+                    {feed.nextRun && parseDate(feed.nextRun)
+                      ? format(parseDate(feed.nextRun)!, 'MMM d, HH:mm')
                       : '—'}
                   </td>
                   <td className="px-4 py-3">

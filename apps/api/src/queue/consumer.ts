@@ -579,9 +579,12 @@ async function handleFeedJob(
     } else if (feed.outputType === 'XML') {
       const result = await generateXml(headers, rows, feed.name, feed.platform, env);
       outputUrl = result.publicUrl;
-    } else if (feed.outputType === 'GOOGLE_SHEETS') {
-      if (!feed.googleSheetId) throw new Error('Google Sheet ID not configured');
-      const result = await generateSheets(
+    }
+
+    // Write to Google Sheets whenever a Sheet ID is configured
+    // (regardless of outputType — this is in addition to CSV/XML generation)
+    if (feed.googleSheetId) {
+      const sheetsResult = await generateSheets(
         storeId,
         feed.googleSheetId,
         feed.googleSheetTab || 'Feed',
@@ -589,7 +592,8 @@ async function handleFeedJob(
         rows,
         env,
       );
-      outputUrl = result.sheetUrl;
+      // If no file output was generated, use the sheet URL
+      if (!outputUrl) outputUrl = sheetsResult.sheetUrl;
     }
 
     const durationMs = Date.now() - startTime;

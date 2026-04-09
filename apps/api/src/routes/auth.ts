@@ -11,6 +11,7 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive.metadata.readonly',
+  'https://www.googleapis.com/auth/userinfo.email',
 ].join(' ');
 const ENTRA_BASE = 'https://login.microsoftonline.com';
 const SESSION_TTL = 8 * 60 * 60; // 8 hours in seconds
@@ -205,6 +206,23 @@ authRoutes.get('/google/callback', async (c) => {
     });
   }
 
+  // Fetch user email (requires userinfo.email scope) and cache in KV
+  try {
+    const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    if (userinfoRes.ok) {
+      const userinfo = (await userinfoRes.json()) as any;
+      if (userinfo.email) {
+        await c.env.MEDIA_KV.put(
+          `google_email:${store.id}`,
+          userinfo.email,
+          { expirationTtl: 30 * 24 * 3600 },
+        );
+      }
+    }
+  } catch { /* non-fatal */ }
+
   return c.redirect(`${c.env.WEB_URL}/settings?google_connected=true&shop=${shopDomain}`);
 });
 
@@ -218,12 +236,13 @@ authRoutes.get('/google/status', async (c) => {
     where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN_CONST),
     columns: { id: true },
   });
-  if (!store) return c.json({ connected: false });
+  if (!store) return c.json({ connected: false, email: null });
   const token = await db.query.googleTokens.findFirst({
     where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
     columns: { id: true },
   });
-  return c.json({ connected: !!token });
+  const email = token ? await c.env.MEDIA_KV.get(`google_email:${store.id}`) : null;
+  return c.json({ connected: !!token, email: email || null });
 });
 
 // ─── GET /google/sheets — list Google Sheets from connected account ────────────
@@ -276,4 +295,56 @@ authRoutes.get('/google/sheets', async (c) => {
   }
   const driveData = (await driveRes.json()) as any;
   return c.json({ sheets: (driveData.files || []).map((f: any) => ({ id: f.id, name: f.name })) });
+});
+
+// ─── GET /google/sheet-info — verify sheet ID and return title ─────────────────
+
+authRoutes.get('/google/sheet-info', async (c) => {
+  const sheetId = c.req.query('sheetId');
+  if (!sheetId) return c.json({ error: 'sheetId required' }, 400);
+
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN_CONST),
+    columns: { id: true },
+  });
+  if (!store) return c.json({ error: 'Store not configured' }, 404);
+
+  const tokenRow = await db.query.googleTokens.findFirst({
+    where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
+  });
+  if (!tokenRow) return c.json({ error: 'Google not connected' }, 401);
+
+  let accessToken = tokenRow.accessToken;
+  if (new Date(tokenRow.expiresAt) < new Date()) {
+    if (!tokenRow.refreshToken) return c.json({ error: 'Token expired' }, 401);
+    const refreshRes = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: c.env.GOOGLE_CLIENT_ID,
+        client_secret: c.env.GOOGLE_CLIENT_SECRET,
+        refresh_token: tokenRow.refreshToken,
+        grant_type: 'refresh_token',
+      }).toString(),
+    });
+    if (!refreshRes.ok) return c.json({ error: 'Token refresh failed' }, 401);
+    const refreshed = (await refreshRes.json()) as any;
+    accessToken = refreshed.access_token;
+    await db.update(googleTokens).set({
+      accessToken,
+      expiresAt: new Date(Date.now() + (refreshed.expires_in || 3600) * 1000).toISOString(),
+      updatedAt: new Date().toISOString(),
+    }).where(eq(googleTokens.id, tokenRow.id));
+  }
+
+  const sheetsRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}?fields=properties.title`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!sheetsRes.ok) {
+    return c.json({ error: 'Sheet not found or no access' }, 404);
+  }
+  const sheetData = (await sheetsRes.json()) as any;
+  return c.json({ title: sheetData.properties?.title || sheetId });
 });

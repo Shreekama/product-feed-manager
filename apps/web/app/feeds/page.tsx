@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { feedsApi } from '../../lib/api';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
+import { parseDate } from '../../lib/dates';
 import { Plus, Play, Pencil, Trash2, Clock } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -105,9 +106,9 @@ export default function FeedsPage() {
                           {lastRun.status}
                         </span>
                         {lastRun.recordsProcessed != null && ` (${lastRun.recordsProcessed} rows)`}
-                        {lastRun.completedAt && (
+                        {lastRun.completedAt && parseDate(lastRun.completedAt) && (
                           <span className="text-gray-400 ml-1">
-                            · {formatDistanceToNow(new Date(lastRun.completedAt), { addSuffix: true })}
+                            · {formatDistanceToNow(parseDate(lastRun.completedAt)!, { addSuffix: true })}
                           </span>
                         )}
                       </span>
@@ -126,9 +127,9 @@ export default function FeedsPage() {
                   </div>
                 )}
 
-                {schedule?.nextRunAt && schedule.isActive && (
+                {schedule?.nextRunAt && schedule.isActive && parseDate(schedule.nextRunAt) && (
                   <div className="text-xs text-gray-400 shrink-0">
-                    Next: {formatDistanceToNow(new Date(schedule.nextRunAt), { addSuffix: true })}
+                    Next: {formatDistanceToNow(parseDate(schedule.nextRunAt)!, { addSuffix: true })}
                   </div>
                 )}
 
