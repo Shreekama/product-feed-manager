@@ -130,9 +130,13 @@ authRoutes.get('/google', (c) => {
   const shop = c.req.query('shop');
   if (!shop) return c.text('Missing shop parameter', 400);
 
+  // Derive redirect URI from the actual request origin so it always matches
+  // what's registered in Google Cloud Console — no env var needed.
+  const redirectUri = new URL(c.req.url).origin + '/api/auth/google/callback';
+
   const params = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID,
-    redirect_uri: c.env.GOOGLE_REDIRECT_URI,
+    redirect_uri: redirectUri,
     response_type: 'code',
     scope: GOOGLE_SCOPES,
     access_type: 'offline',
@@ -148,6 +152,8 @@ authRoutes.get('/google/callback', async (c) => {
   const shopDomain = c.req.query('state');
   if (!code || !shopDomain) return c.text('Missing code or state parameter', 400);
 
+  const redirectUri = new URL(c.req.url).origin + '/api/auth/google/callback';
+
   const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -155,7 +161,7 @@ authRoutes.get('/google/callback', async (c) => {
       code,
       client_id: c.env.GOOGLE_CLIENT_ID,
       client_secret: c.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: c.env.GOOGLE_REDIRECT_URI,
+      redirect_uri: redirectUri,
       grant_type: 'authorization_code',
     }).toString(),
   });

@@ -114,13 +114,16 @@ export default function NewFeedPage() {
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-600 mb-1">Platform</label>
-              <select
+              <input
                 {...register('platform')}
-                onChange={(e) => applyTemplate(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-              >
-                {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+                list="platform-list"
+                placeholder="e.g. GOOGLE"
+                onChange={(e) => applyTemplate(e.target.value.toUpperCase())}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              <datalist id="platform-list">
+                {PLATFORMS.map((p) => <option key={p} value={p} />)}
+              </datalist>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 mb-1">Country</label>

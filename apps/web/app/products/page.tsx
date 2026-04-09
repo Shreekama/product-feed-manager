@@ -46,6 +46,7 @@ type VariantRow = {
   productId: string;
   productTitle: string;
   vendor: string | null;
+  productType: string | null;
   status: string;
   excludeFromFeeds: boolean;
   images: ImgEntry[];
@@ -74,6 +75,7 @@ function expandVariants(products: any[]): VariantRow[] {
         productId: p.id,
         productTitle: p.title,
         vendor: p.vendor || null,
+        productType: p.productType || null,
         status: p.status,
         excludeFromFeeds: p.excludeFromFeeds,
         images,
@@ -86,7 +88,7 @@ function expandVariants(products: any[]): VariantRow[] {
 // ── Column config ─────────────────────────────────────────────────────────────
 
 const ALL_COL_IDS = [
-  'select', 'thumbnail', 'product', 'sku', 'vendor', 'price', 'compareAt',
+  'select', 'thumbnail', 'product', 'sku', 'vendor', 'productType', 'price', 'compareAt',
   'inventory', 'status', 'option1', 'option2', 'option3',
   'image1', 'image2', 'image3', 'image4', 'image5', 'image6', 'image7', 'image8',
   'video1', 'video2', 'barcode', 'exclude',
@@ -94,8 +96,9 @@ const ALL_COL_IDS = [
 
 const COL_LABELS: Record<string, string> = {
   select: 'Select', thumbnail: 'Thumbnail', product: 'Product', sku: 'SKU',
-  vendor: 'Vendor', price: 'Price', compareAt: 'Compare At', inventory: 'Inventory',
-  status: 'Status', option1: 'Option 1', option2: 'Option 2', option3: 'Option 3',
+  vendor: 'Vendor', productType: 'Product Type', price: 'Price', compareAt: 'Compare At',
+  inventory: 'Inventory', status: 'Status',
+  option1: 'Option 1', option2: 'Option 2', option3: 'Option 3',
   image1: 'Image 1', image2: 'Image 2', image3: 'Image 3', image4: 'Image 4',
   image5: 'Image 5', image6: 'Image 6', image7: 'Image 7', image8: 'Image 8',
   video1: 'Video 1', video2: 'Video 2', barcode: 'Barcode', exclude: 'Exclude',
@@ -105,7 +108,7 @@ const NON_HIDEABLE = new Set(['select', 'thumbnail', 'product', 'exclude']);
 
 const DEFAULT_VIS: VisibilityState = {
   select: true, thumbnail: true, product: true, sku: true, vendor: true,
-  price: true, inventory: true, status: true, exclude: true,
+  productType: false, price: true, inventory: true, status: true, exclude: true,
   compareAt: false, option1: false, option2: false, option3: false,
   image1: false, image2: false, image3: false, image4: false,
   image5: false, image6: false, image7: false, image8: false,
@@ -309,6 +312,7 @@ export default function ProductsPage() {
   const [search, setSearch] = useState('');
   const [vendor, setVendor] = useState('');
   const [status, setStatus] = useState('');
+  const [productType, setProductType] = useState('');
   const [inStock, setInStock] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 50;
@@ -328,10 +332,11 @@ export default function ProductsPage() {
 
   // Data
   const { data, isLoading } = useQuery({
-    queryKey: ['products', { search, vendor, status, inStock, page, limit }],
-    queryFn: () => productsApi.list({ search, vendor, status, inStock: inStock || undefined, page, limit }),
+    queryKey: ['products', { search, vendor, status, productType, inStock, page, limit }],
+    queryFn: () => productsApi.list({ search, vendor, status, productType: productType || undefined, inStock: inStock || undefined, page, limit }),
   });
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: productsApi.vendors });
+  const { data: productTypes = [] } = useQuery({ queryKey: ['product-types'], queryFn: productsApi.productTypes });
 
   const toggleExclude = useMutation({
     mutationFn: ({ id, exclude }: { id: string; exclude: boolean }) =>
@@ -415,6 +420,12 @@ export default function ProductsPage() {
       id: 'vendor',
       header: 'Vendor',
       cell: ({ getValue }) => <span className="text-gray-600">{getValue() || '—'}</span>,
+    }),
+    // Product Type
+    colHelper.accessor('productType', {
+      id: 'productType',
+      header: 'Product Type',
+      cell: ({ getValue }) => <span className="text-gray-600 text-xs">{getValue() || '—'}</span>,
     }),
     // Price
     colHelper.accessor('price', {
@@ -602,6 +613,14 @@ export default function ProductsPage() {
         >
           <option value="">All vendors</option>
           {vendors.map((v: string) => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <select
+          value={productType}
+          onChange={(e) => { setProductType(e.target.value); setPage(1); }}
+          className="border border-gray-300 rounded-md text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <option value="">All product types</option>
+          {productTypes.map((t: string) => <option key={t} value={t}>{t}</option>)}
         </select>
         <select
           value={status}

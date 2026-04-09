@@ -22,6 +22,7 @@ export interface ProductsQuery {
   search?: string;
   vendor?: string;
   status?: string;
+  productType?: string;
   inStock?: boolean;
   excludeFromFeeds?: boolean;
   page?: number;
@@ -40,6 +41,9 @@ export const productsApi = {
 
   vendors: () =>
     apiClient.get('/products/vendors').then((r) => r.data),
+
+  productTypes: () =>
+    apiClient.get('/products/product-types').then((r) => r.data),
 };
 
 // ─── Feeds ────────────────────────────────────────────────────────────────────
