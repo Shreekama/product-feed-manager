@@ -670,6 +670,7 @@ function resolveFilterField(variant: any, field: string): any {
     sku: variant.sku,
     price: parseFloat(variant.price),
     inventory: totalInventory,
+    availability: totalInventory > 0 ? 'in stock' : 'out of stock',
   };
   return fieldMap[field] ?? null;
 }

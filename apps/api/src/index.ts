@@ -27,6 +27,22 @@ app.use(
   }),
 );
 
+// ─── R2 file download — must be before feedRoutes middleware ─────────────────
+app.get('/api/feeds/file', async (c) => {
+  const key = c.req.query('key');
+  if (!key) return c.json({ error: 'Missing key' }, 400);
+  const obj = await c.env.FEED_R2.get(key);
+  if (!obj) return c.json({ error: 'File not found' }, 404);
+  const contentType = obj.httpMetadata?.contentType || 'application/octet-stream';
+  const filename = key.split('/').pop() || 'feed';
+  return new Response(obj.body as ReadableStream, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Disposition': `inline; filename="${filename}"`,
+    },
+  });
+});
+
 app.route('/api/shopify', shopifyRoutes);
 app.route('/api/webhooks', webhookRoutes);
 app.route('/api/products', productRoutes);

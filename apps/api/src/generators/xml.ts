@@ -25,7 +25,7 @@ export async function generateXml(
     httpMetadata: { contentType: 'application/xml; charset=utf-8' },
   });
 
-  const publicUrl = `https://feeds.r2.dev/${key}`;
+  const publicUrl = `/api/feeds/file?key=${encodeURIComponent(key)}`;
 
   return { r2Key: key, publicUrl, rowCount: rows.length };
 }

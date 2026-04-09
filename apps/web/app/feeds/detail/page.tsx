@@ -16,7 +16,7 @@ import { parseDate } from '../../../lib/dates';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 const OUTPUT_TYPES = ['CSV', 'XML', 'GOOGLE_SHEETS'];
-const SOURCE_TYPES = ['product', 'variant', 'metafield', 'computed'];
+const SOURCE_TYPES = ['product', 'variant', 'metafield', 'computed', 'fixed'];
 const COMPUTED_KEYS = [
   'image_url', 'all_images', 'image_url_2', 'image_url_3',
   'video_url', 'inventory', 'availability', 'product_url', 'full_title', 'base_sku',
@@ -25,6 +25,26 @@ const PRODUCT_KEYS = ['title', 'vendor', 'product_type', 'handle', 'tags', 'desc
 const VARIANT_KEYS = [
   'sku', 'price', 'compare_at_price', 'barcode',
   'option1', 'option2', 'option3', 'weight', 'weight_unit', 'inventory', 'taxable',
+];
+
+const FILTER_FIELDS = [
+  { value: 'product_type', label: 'Product Type' },
+  { value: 'vendor',       label: 'Vendor' },
+  { value: 'availability', label: 'Availability' },
+  { value: 'status',       label: 'Status' },
+  { value: 'sku',          label: 'SKU' },
+  { value: 'price',        label: 'Price' },
+  { value: 'inventory',    label: 'Inventory' },
+];
+const FILTER_OPERATORS = [
+  { value: 'in',       label: 'is one of' },
+  { value: 'eq',       label: 'equals' },
+  { value: 'neq',      label: 'not equals' },
+  { value: 'contains', label: 'contains' },
+  { value: 'gt',       label: '>' },
+  { value: 'lt',       label: '<' },
+  { value: 'gte',      label: '>=' },
+  { value: 'lte',      label: '<=' },
 ];
 
 function getSourceKeys(sourceType: string): string[] {
@@ -93,6 +113,15 @@ function FeedEditInner() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['feed-runs', id] }),
   });
 
+  // ── Delete feed ────────────────────────────────────────────────────────────
+  const deleteFeed = useMutation({
+    mutationFn: () => feedsApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['feeds'] });
+      router.push('/feeds');
+    },
+  });
+
   // ── Form ───────────────────────────────────────────────────────────────────
   const { register, control, handleSubmit, watch, reset } = useForm({
     defaultValues: {
@@ -103,12 +132,15 @@ function FeedEditInner() {
       googleSheetId: '',
       googleSheetTab: 'Feed',
       columnMappings: [] as { feedColumn: string; sourceType: string; sourceKey: string; transform: string }[],
+      filterRules: [] as { field: string; operator: string; value: string }[],
       scheduleEnabled: false,
       cronExpr: '0 */6 * * *',
     },
   });
 
-  const { fields, append, remove } = useFieldArray({ control, name: 'columnMappings' });
+  const { fields, append, remove }                         = useFieldArray({ control, name: 'columnMappings' });
+  const { fields: filterFields, append: appendFilter,
+          remove: removeFilter }                           = useFieldArray({ control, name: 'filterRules' });
   const scheduleEnabled  = watch('scheduleEnabled');
   const watchedMappings  = watch('columnMappings');
   const watchedSheetId   = watch('googleSheetId');
@@ -117,7 +149,6 @@ function FeedEditInner() {
   useEffect(() => {
     const trimmed = (watchedSheetId || '').trim();
     if (!trimmed) { setSheetTitle(null); return; }
-    // Skip verification if it came from the dropdown (already verified by the list)
     if (googleSheets.some((s) => s.id === trimmed)) {
       setSheetTitle(googleSheets.find((s) => s.id === trimmed)?.name || null);
       return;
@@ -142,6 +173,7 @@ function FeedEditInner() {
   useEffect(() => {
     if (feed && !formReady) {
       const mappings = parseJsonField(feed.columnMappings);
+      const filters  = parseJsonField((feed as any).filterRules);
       reset({
         name:            feed.name,
         platform:        feed.platform    || '',
@@ -150,6 +182,7 @@ function FeedEditInner() {
         googleSheetId:   (feed as any).googleSheetId  || '',
         googleSheetTab:  (feed as any).googleSheetTab || 'Feed',
         columnMappings:  mappings,
+        filterRules:     filters,
         scheduleEnabled: !!(feed as any).schedule,
         cronExpr:        (feed as any).schedule?.cronExpr || '0 */6 * * *',
       });
@@ -168,6 +201,7 @@ function FeedEditInner() {
         googleSheetId:  data.googleSheetId  || null,
         googleSheetTab: data.googleSheetTab || null,
         columnMappings: data.columnMappings,
+        filterRules:    data.filterRules,
         ...(data.scheduleEnabled && { schedule: { cronExpr: data.cronExpr } }),
       });
       qc.invalidateQueries({ queryKey: ['feed', id] });
@@ -306,6 +340,68 @@ function FeedEditInner() {
           )}
         </section>
 
+        {/* Filter Rules */}
+        <section className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-medium text-gray-700">Product Filters</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Only products matching ALL rules will be included in the feed.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => appendFilter({ field: 'product_type', operator: 'in', value: '' })}
+              className="inline-flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-md"
+            >
+              <Plus className="w-3 h-3" /> Add Filter
+            </button>
+          </div>
+
+          {filterFields.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">No filters — all active products will be included.</p>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-[1.5fr_1.2fr_2fr_auto] gap-2 text-xs font-medium text-gray-500 px-1">
+                <span>Field</span>
+                <span>Operator</span>
+                <span>Value(s) — comma separated for "is one of"</span>
+                <span />
+              </div>
+              {filterFields.map((f, i) => (
+                <div key={f.id} className="grid grid-cols-[1.5fr_1.2fr_2fr_auto] gap-2 items-center">
+                  <select
+                    {...register(`filterRules.${i}.field`)}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs"
+                  >
+                    {FILTER_FIELDS.map((ff) => (
+                      <option key={ff.value} value={ff.value}>{ff.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    {...register(`filterRules.${i}.operator`)}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs"
+                  >
+                    {FILTER_OPERATORS.map((op) => (
+                      <option key={op.value} value={op.value}>{op.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    {...register(`filterRules.${i}.value`)}
+                    placeholder='e.g. Lehenga, Gown, Co-ordset'
+                    className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeFilter(i)}
+                    className="text-red-400 hover:text-red-600 p-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* Column Mappings */}
         <section className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="flex items-center justify-between mb-4">
@@ -323,7 +419,7 @@ function FeedEditInner() {
             <div className="grid grid-cols-[2fr_1fr_2fr_1.5fr_auto] gap-2 text-xs font-medium text-gray-500 px-1">
               <span>Feed Column</span>
               <span>Source Type</span>
-              <span>Source Key</span>
+              <span>Source Key / Value</span>
               <span>Transform</span>
               <span />
             </div>
@@ -344,10 +440,10 @@ function FeedEditInner() {
                   >
                     {SOURCE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
-                  {srcType === 'metafield' ? (
+                  {srcType === 'metafield' || srcType === 'fixed' ? (
                     <input
                       {...register(`columnMappings.${i}.sourceKey`)}
-                      placeholder="namespace.key"
+                      placeholder={srcType === 'fixed' ? 'literal value to output' : 'namespace.key'}
                       className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
                   ) : (
@@ -361,7 +457,7 @@ function FeedEditInner() {
                   )}
                   <input
                     {...register(`columnMappings.${i}.transform`)}
-                    placeholder="e.g. uppercase"
+                    placeholder="e.g. map:Lehenga=Apparel"
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
                   />
                   <button
@@ -375,6 +471,9 @@ function FeedEditInner() {
               );
             })}
           </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Transforms: <code>uppercase</code>, <code>lowercase</code>, <code>truncate:150</code>, <code>append: INR</code>, <code>default:new</code>, <code>map:From=To|From2=To2</code>
+          </p>
         </section>
 
         {/* Schedule */}
@@ -403,23 +502,38 @@ function FeedEditInner() {
           </p>
         )}
 
-        <div className="flex gap-3 items-center">
+        <div className="flex gap-3 items-center justify-between">
+          <div className="flex gap-3 items-center">
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex items-center gap-2 bg-brand-600 text-white px-6 py-2 rounded-md text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+            <Link href="/feeds" className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
+              Cancel
+            </Link>
+            {savedOk && (
+              <span className="flex items-center gap-1.5 text-green-600 text-sm">
+                <CheckCircle className="w-4 h-4" /> Saved!
+              </span>
+            )}
+          </div>
           <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex items-center gap-2 bg-brand-600 text-white px-6 py-2 rounded-md text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+            type="button"
+            onClick={() => {
+              if (confirm(`Delete feed "${(feed as any).name}"? This cannot be undone.`)) {
+                deleteFeed.mutate();
+              }
+            }}
+            disabled={deleteFeed.isPending}
+            className="inline-flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-4 py-2 rounded-md transition-colors disabled:opacity-50"
           >
-            <Save className="w-4 h-4" />
-            {saving ? 'Saving…' : 'Save Changes'}
+            <Trash2 className="w-4 h-4" />
+            {deleteFeed.isPending ? 'Deleting…' : 'Delete Feed'}
           </button>
-          <Link href="/feeds" className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
-            Cancel
-          </Link>
-          {savedOk && (
-            <span className="flex items-center gap-1.5 text-green-600 text-sm">
-              <CheckCircle className="w-4 h-4" /> Saved!
-            </span>
-          )}
         </div>
       </form>
 
@@ -453,6 +567,9 @@ function FeedEditInner() {
               {(runs as any[]).map((run) => {
                 const cfg  = STATUS_CONFIG[run.status] || { label: run.status, icon: Clock, color: 'text-gray-500' };
                 const Icon = cfg.icon;
+                const isLink = run.outputUrl && (
+                  run.outputUrl.startsWith('http') || run.outputUrl.startsWith('/api/')
+                );
                 return (
                   <tr key={run.id} className="hover:bg-gray-50">
                     <td className="py-2 px-2">
@@ -469,14 +586,15 @@ function FeedEditInner() {
                       {(() => { const d = parseDate(run.startedAt); return d ? format(d, 'MMM d HH:mm:ss') : '—'; })()}
                     </td>
                     <td className="py-2 px-2 text-xs">
-                      {run.outputUrl ? (
-                        run.outputUrl.startsWith('http') ? (
-                          <a href={run.outputUrl} target="_blank" rel="noreferrer" className="text-brand-600 underline">
-                            Open
-                          </a>
-                        ) : (
-                          <span title={run.outputUrl}>{run.outputUrl.split('/').pop()}</span>
-                        )
+                      {isLink ? (
+                        <a
+                          href={run.outputUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-brand-600 underline"
+                        >
+                          Open
+                        </a>
                       ) : run.errorMessage ? (
                         <span className="text-red-400" title={run.errorMessage}>Error</span>
                       ) : '—'}
