@@ -26,10 +26,12 @@ export async function buildRow(
   const row: FeedRow = {};
   const product = variant.product;
 
-  const totalInventory = (variant.inventoryLevels || []).reduce(
-    (sum: number, l: any) => sum + (l.available || 0),
-    0,
-  );
+  const totalInventory = variant.inventoryQuantity > 0
+    ? variant.inventoryQuantity
+    : (variant.inventoryLevels || []).reduce(
+        (sum: number, l: any) => sum + (l.available || 0),
+        0,
+      );
 
   for (const mapping of mappings) {
     let value = '';
@@ -145,7 +147,7 @@ function resolveComputed(
     case 'inventory':
       return String(inventory);
     case 'availability':
-      return inventory > 0 ? 'in stock' : 'out of stock';
+      return (inventory > 0 || variant.availableForSale === true) ? 'in stock' : 'out of stock';
     case 'product_url':
       return shopDomain
         ? `https://${shopDomain}/products/${product.handle}?variant=${variant.shopifyId?.split('/').pop()}`
