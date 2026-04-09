@@ -3,10 +3,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm, useFieldArray } from 'react-hook-form';
+import { useQuery } from '@tanstack/react-query';
 import { feedsApi } from '../../../lib/api';
 import { Plus, Trash2, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 const PLATFORMS = ['GOOGLE', 'FACEBOOK', 'PINTEREST'];
 const OUTPUT_TYPES = ['CSV', 'XML', 'GOOGLE_SHEETS'];
 const SOURCE_TYPES = ['product', 'variant', 'metafield', 'computed'];
@@ -15,71 +17,84 @@ const COMPUTED_KEYS = [
   'image_url', 'all_images', 'image_url_2', 'image_url_3',
   'video_url', 'inventory', 'availability', 'product_url', 'full_title', 'base_sku',
 ];
-
 const PRODUCT_KEYS = ['title', 'vendor', 'product_type', 'handle', 'tags', 'description', 'body_html'];
-const VARIANT_KEYS = ['sku', 'price', 'compare_at_price', 'barcode', 'option1', 'option2', 'option3', 'weight', 'weight_unit', 'inventory', 'taxable'];
+const VARIANT_KEYS = [
+  'sku', 'price', 'compare_at_price', 'barcode',
+  'option1', 'option2', 'option3', 'weight', 'weight_unit', 'inventory', 'taxable',
+];
+
+function getSourceKeys(sourceType: string): string[] {
+  if (sourceType === 'product') return PRODUCT_KEYS;
+  if (sourceType === 'variant') return VARIANT_KEYS;
+  if (sourceType === 'computed') return COMPUTED_KEYS;
+  return [];
+}
 
 // Default Google Merchant mapping
 const DEFAULT_GOOGLE_MAPPINGS = [
-  { feedColumn: 'g:id', sourceType: 'variant', sourceKey: 'sku', transform: '' },
-  { feedColumn: 'g:title', sourceType: 'computed', sourceKey: 'full_title', transform: '' },
-  { feedColumn: 'g:description', sourceType: 'product', sourceKey: 'description', transform: 'truncate:5000' },
-  { feedColumn: 'g:link', sourceType: 'computed', sourceKey: 'product_url', transform: '' },
-  { feedColumn: 'g:image_link', sourceType: 'computed', sourceKey: 'image_url', transform: '' },
-  { feedColumn: 'g:price', sourceType: 'variant', sourceKey: 'price', transform: 'append: INR' },
-  { feedColumn: 'g:availability', sourceType: 'computed', sourceKey: 'availability', transform: '' },
-  { feedColumn: 'g:brand', sourceType: 'product', sourceKey: 'vendor', transform: '' },
-  { feedColumn: 'g:gtin', sourceType: 'variant', sourceKey: 'barcode', transform: '' },
-  { feedColumn: 'g:condition', sourceType: 'product', sourceKey: 'title', transform: 'default:new' },
+  { feedColumn: 'g:id',           sourceType: 'variant',  sourceKey: 'sku',          transform: ''             },
+  { feedColumn: 'g:title',        sourceType: 'computed', sourceKey: 'full_title',   transform: ''             },
+  { feedColumn: 'g:description',  sourceType: 'product',  sourceKey: 'description',  transform: 'truncate:5000'},
+  { feedColumn: 'g:link',         sourceType: 'computed', sourceKey: 'product_url',  transform: ''             },
+  { feedColumn: 'g:image_link',   sourceType: 'computed', sourceKey: 'image_url',    transform: ''             },
+  { feedColumn: 'g:price',        sourceType: 'variant',  sourceKey: 'price',        transform: 'append: INR'  },
+  { feedColumn: 'g:availability', sourceType: 'computed', sourceKey: 'availability', transform: ''             },
+  { feedColumn: 'g:brand',        sourceType: 'product',  sourceKey: 'vendor',       transform: ''             },
+  { feedColumn: 'g:gtin',         sourceType: 'variant',  sourceKey: 'barcode',      transform: ''             },
+  { feedColumn: 'g:condition',    sourceType: 'product',  sourceKey: 'title',        transform: 'default:new'  },
 ];
 
 export default function NewFeedPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]   = useState('');
+
+  // Fetch connected Google Sheets
+  const { data: sheetsData } = useQuery({
+    queryKey: ['google-sheets'],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/auth/google/sheets`);
+      if (!res.ok) return { sheets: [] };
+      return res.json() as any;
+    },
+  });
+  const googleSheets: { id: string; name: string }[] = sheetsData?.sheets || [];
 
   const { register, control, handleSubmit, watch, setValue } = useForm({
     defaultValues: {
-      name: '',
-      platform: 'GOOGLE',
-      country: 'US',
-      outputType: 'CSV',
-      googleSheetId: '',
-      googleSheetTab: 'Feed',
-      columnMappings: DEFAULT_GOOGLE_MAPPINGS,
+      name:            '',
+      platform:        'GOOGLE',
+      country:         'IN',
+      outputType:      'CSV',
+      googleSheetId:   '',
+      googleSheetTab:  'Feed',
+      columnMappings:  DEFAULT_GOOGLE_MAPPINGS,
       scheduleEnabled: false,
-      cronExpr: '0 */6 * * *',
+      cronExpr:        '0 */6 * * *',
     },
   });
 
   const { fields, append, remove } = useFieldArray({ control, name: 'columnMappings' });
-  const platform = watch('platform');
-  const outputType = watch('outputType');
-  const scheduleEnabled = watch('scheduleEnabled');
+  const scheduleEnabled  = watch('scheduleEnabled');
+  const watchedMappings  = watch('columnMappings');
 
   const applyTemplate = (p: string) => {
-    if (p === 'GOOGLE') setValue('columnMappings', DEFAULT_GOOGLE_MAPPINGS as any);
+    if (p.toUpperCase() === 'GOOGLE') setValue('columnMappings', DEFAULT_GOOGLE_MAPPINGS as any);
   };
 
   const onSubmit = async (data: any) => {
-    setSaving(true);
-    setError('');
+    setSaving(true); setError('');
     try {
-      const payload: any = {
-        name: data.name,
-        platform: data.platform,
-        country: data.country,
-        outputType: data.outputType,
+      await feedsApi.create({
+        name:           data.name,
+        platform:       data.platform,
+        country:        data.country,
+        outputType:     data.outputType,
+        googleSheetId:  data.googleSheetId  || null,
+        googleSheetTab: data.googleSheetTab || null,
         columnMappings: data.columnMappings,
-        ...(data.outputType === 'GOOGLE_SHEETS' && {
-          googleSheetId: data.googleSheetId,
-          googleSheetTab: data.googleSheetTab,
-        }),
-        ...(data.scheduleEnabled && {
-          schedule: { cronExpr: data.cronExpr },
-        }),
-      };
-      await feedsApi.create(payload);
+        ...(data.scheduleEnabled && { schedule: { cronExpr: data.cronExpr } }),
+      });
       router.push('/feeds');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to create feed');
@@ -106,7 +121,7 @@ export default function NewFeedPage() {
             <label className="block text-sm font-medium text-gray-600 mb-1">Feed Name</label>
             <input
               {...register('name', { required: true })}
-              placeholder="My Google Feed – US"
+              placeholder="My Google Feed – IN"
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
@@ -116,18 +131,21 @@ export default function NewFeedPage() {
               <label className="block text-sm font-medium text-gray-600 mb-1">Platform</label>
               <input
                 {...register('platform')}
-                list="platform-list"
+                list="new-platform-list"
                 placeholder="e.g. GOOGLE"
-                onChange={(e) => applyTemplate(e.target.value.toUpperCase())}
+                onChange={(e) => applyTemplate(e.target.value)}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
-              <datalist id="platform-list">
+              <datalist id="new-platform-list">
                 {PLATFORMS.map((p) => <option key={p} value={p} />)}
               </datalist>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 mb-1">Country</label>
-              <input {...register('country')} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
+              <input
+                {...register('country')}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-600 mb-1">Output Type</label>
@@ -136,18 +154,46 @@ export default function NewFeedPage() {
               </select>
             </div>
           </div>
+        </section>
 
-          {outputType === 'GOOGLE_SHEETS' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Google Sheet ID</label>
-                <input {...register('googleSheetId')} placeholder="1BxiMVs0..." className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">Tab Name</label>
-                <input {...register('googleSheetTab')} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
-              </div>
+        {/* Google Sheet */}
+        <section className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+          <h2 className="font-medium text-gray-700">Google Sheet Output</h2>
+          <div className="grid grid-cols-[1fr_180px] gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1">Sheet</label>
+              {googleSheets.length > 0 ? (
+                <select
+                  {...register('googleSheetId')}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="">— select a sheet —</option>
+                  {googleSheets.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  {...register('googleSheetId')}
+                  placeholder="Sheet ID (e.g. 1BxiMVs0XYZ…)"
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                />
+              )}
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1">Tab Name</label>
+              <input
+                {...register('googleSheetTab')}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+          {googleSheets.length === 0 && (
+            <p className="text-xs text-gray-400">
+              Connect Google in{' '}
+              <Link href="/settings" className="underline text-brand-600">Settings</Link>
+              {' '}to browse your sheets, or enter the Sheet ID manually.
+            </p>
           )}
         </section>
 
@@ -160,8 +206,7 @@ export default function NewFeedPage() {
               onClick={() => append({ feedColumn: '', sourceType: 'product', sourceKey: '', transform: '' })}
               className="inline-flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-md"
             >
-              <Plus className="w-3 h-3" />
-              Add Row
+              <Plus className="w-3 h-3" /> Add Row
             </button>
           </div>
 
@@ -171,43 +216,51 @@ export default function NewFeedPage() {
               <span>Source Type</span>
               <span>Source Key</span>
               <span>Transform</span>
-              <span></span>
+              <span />
             </div>
 
-            {fields.map((field, i) => (
-              <div key={field.id} className="grid grid-cols-[2fr_1fr_2fr_1.5fr_auto] gap-2 items-center">
-                <input
-                  {...register(`columnMappings.${i}.feedColumn`)}
-                  placeholder="g:title"
-                  className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
-                />
-                <select
-                  {...register(`columnMappings.${i}.sourceType`)}
-                  className="border border-gray-300 rounded px-2 py-1 text-xs"
-                >
-                  {SOURCE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input
-                  {...register(`columnMappings.${i}.sourceKey`)}
-                  placeholder="title"
-                  list={`keys-${i}`}
-                  className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
-                />
-                <datalist id={`keys-${i}`}>
-                  {[...PRODUCT_KEYS, ...VARIANT_KEYS, ...COMPUTED_KEYS].map((k) => (
-                    <option key={k} value={k} />
-                  ))}
-                </datalist>
-                <input
-                  {...register(`columnMappings.${i}.transform`)}
-                  placeholder="e.g. uppercase"
-                  className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
-                />
-                <button type="button" onClick={() => remove(i)} className="text-red-400 hover:text-red-600 p-1">
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+            {fields.map((field, i) => {
+              const srcType = watchedMappings?.[i]?.sourceType || 'product';
+              const keys    = getSourceKeys(srcType);
+              return (
+                <div key={field.id} className="grid grid-cols-[2fr_1fr_2fr_1.5fr_auto] gap-2 items-center">
+                  <input
+                    {...register(`columnMappings.${i}.feedColumn`)}
+                    placeholder="g:title"
+                    className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                  <select
+                    {...register(`columnMappings.${i}.sourceType`)}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs"
+                  >
+                    {SOURCE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  {srcType === 'metafield' ? (
+                    <input
+                      {...register(`columnMappings.${i}.sourceKey`)}
+                      placeholder="namespace.key"
+                      className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  ) : (
+                    <select
+                      {...register(`columnMappings.${i}.sourceKey`)}
+                      className="border border-gray-300 rounded px-2 py-1 text-xs"
+                    >
+                      <option value="">— select field —</option>
+                      {keys.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  )}
+                  <input
+                    {...register(`columnMappings.${i}.transform`)}
+                    placeholder="e.g. uppercase"
+                    className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none"
+                  />
+                  <button type="button" onClick={() => remove(i)} className="text-red-400 hover:text-red-600 p-1">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -215,19 +268,17 @@ export default function NewFeedPage() {
         <section className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
           <div className="flex items-center gap-3">
             <input type="checkbox" id="sched" {...register('scheduleEnabled')} className="rounded" />
-            <label htmlFor="sched" className="font-medium text-gray-700 cursor-pointer">
-              Enable Schedule
-            </label>
+            <label htmlFor="sched" className="font-medium text-gray-700 cursor-pointer">Enable Schedule</label>
           </div>
           {scheduleEnabled && (
             <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1">Cron Expression</label>
+              <label className="block text-sm font-medium text-gray-600 mb-1">Cron Expression (UTC)</label>
               <input
                 {...register('cronExpr')}
                 className="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Examples: <code>0 */6 * * *</code> (every 6h), <code>0 9 * * *</code> (daily 9am)
+                Examples: <code>0 */6 * * *</code> (every 6h), <code>0 9 * * *</code> (daily 9 AM UTC)
               </p>
             </div>
           )}
