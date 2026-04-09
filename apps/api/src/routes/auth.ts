@@ -8,7 +8,10 @@ export const authRoutes = new Hono<{ Bindings: Env }>();
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const GOOGLE_SCOPES = ['https://www.googleapis.com/auth/spreadsheets'].join(' ');
+const GOOGLE_SCOPES = [
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
+].join(' ');
 const ENTRA_BASE = 'https://login.microsoftonline.com';
 const SESSION_TTL = 8 * 60 * 60; // 8 hours in seconds
 
@@ -203,4 +206,74 @@ authRoutes.get('/google/callback', async (c) => {
   }
 
   return c.redirect(`${c.env.WEB_URL}/settings?google_connected=true&shop=${shopDomain}`);
+});
+
+// ─── GET /google/status — check if Google is connected for the store ───────────
+
+const SHOP_DOMAIN_CONST = 'd7f63b.myshopify.com';
+
+authRoutes.get('/google/status', async (c) => {
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN_CONST),
+    columns: { id: true },
+  });
+  if (!store) return c.json({ connected: false });
+  const token = await db.query.googleTokens.findFirst({
+    where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
+    columns: { id: true },
+  });
+  return c.json({ connected: !!token });
+});
+
+// ─── GET /google/sheets — list Google Sheets from connected account ────────────
+
+authRoutes.get('/google/sheets', async (c) => {
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN_CONST),
+    columns: { id: true },
+  });
+  if (!store) return c.json({ error: 'Store not configured' }, 404);
+
+  const tokenRow = await db.query.googleTokens.findFirst({
+    where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
+  });
+  if (!tokenRow) return c.json({ error: 'Google not connected' }, 401);
+
+  // Refresh token if expired
+  let accessToken = tokenRow.accessToken;
+  if (new Date(tokenRow.expiresAt) < new Date()) {
+    if (!tokenRow.refreshToken) return c.json({ error: 'Token expired, please reconnect' }, 401);
+    const refreshRes = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: c.env.GOOGLE_CLIENT_ID,
+        client_secret: c.env.GOOGLE_CLIENT_SECRET,
+        refresh_token: tokenRow.refreshToken,
+        grant_type: 'refresh_token',
+      }).toString(),
+    });
+    if (!refreshRes.ok) return c.json({ error: 'Token refresh failed, please reconnect' }, 401);
+    const refreshed = (await refreshRes.json()) as any;
+    accessToken = refreshed.access_token;
+    await db.update(googleTokens).set({
+      accessToken,
+      expiresAt: new Date(Date.now() + (refreshed.expires_in || 3600) * 1000).toISOString(),
+      updatedAt: new Date().toISOString(),
+    }).where(eq(googleTokens.id, tokenRow.id));
+  }
+
+  // List spreadsheets from Google Drive
+  const driveRes = await fetch(
+    "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&orderBy=modifiedTime+desc&pageSize=50&fields=files(id%2Cname)",
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!driveRes.ok) {
+    // Scope might be missing (old token) — return empty gracefully
+    return c.json({ sheets: [] });
+  }
+  const driveData = (await driveRes.json()) as any;
+  return c.json({ sheets: (driveData.files || []).map((f: any) => ({ id: f.id, name: f.name })) });
 });

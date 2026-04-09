@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, Square,
-  ScrollText, Settings,
+  ScrollText, Settings, BookOpen,
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { clsx } from 'clsx';
@@ -100,7 +100,6 @@ function SyncCard() {
             <AlertCircle className="w-4 h-4 shrink-0" /> Sync failed
           </div>
           <p className="text-xs text-red-600 font-mono break-all">{progress?.error || 'Unknown error'}</p>
-          <p className="text-xs text-red-500">Check <code className="bg-red-100 px-1 rounded">/api/shopify/debug</code> for full details</p>
         </div>
       )}
 
@@ -178,17 +177,6 @@ function SyncCard() {
 
 // ── Logs tab ──────────────────────────────────────────────────────────────────
 
-const STATUS_STYLES: Record<string, string> = {
-  success: 'bg-green-100 text-green-700',
-  error:   'bg-red-100 text-red-600',
-  info:    'bg-blue-100 text-blue-600',
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  sync: 'SYNC',
-  feed: 'FEED',
-};
-
 function LogsTab() {
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['logs'],
@@ -224,21 +212,16 @@ function LogsTab() {
         <div className="divide-y divide-gray-50 max-h-[600px] overflow-y-auto">
           {events.map((ev: any, i: number) => (
             <div key={i} className="flex items-start gap-3 px-5 py-3 hover:bg-gray-50">
-              {/* Type badge */}
               <span className={clsx(
                 'shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide mt-0.5',
                 ev.type === 'sync' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700',
               )}>
-                {TYPE_LABEL[ev.type] || ev.type}
+                {ev.type === 'sync' ? 'SYNC' : 'FEED'}
               </span>
-
-              {/* Status dot */}
               <span className={clsx(
                 'shrink-0 w-2 h-2 rounded-full mt-1.5',
                 ev.status === 'success' ? 'bg-green-500' : ev.status === 'error' ? 'bg-red-500' : 'bg-blue-400',
               )} />
-
-              {/* Message */}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-700 leading-snug">{ev.message}</p>
                 {ev.detail && (
@@ -248,8 +231,6 @@ function LogsTab() {
                   </a>
                 )}
               </div>
-
-              {/* Time */}
               <span className="shrink-0 text-xs text-gray-400 whitespace-nowrap">
                 {ev.time ? format(new Date(ev.time), 'MMM d, HH:mm') : '—'}
               </span>
@@ -263,18 +244,35 @@ function LogsTab() {
 
 // ── Google Sheets card ────────────────────────────────────────────────────────
 
-function GoogleCard({ googleConnected }: { googleConnected: boolean }) {
+function GoogleCard() {
+  const params       = useSearchParams();
+  const justConnected = params.get('google_connected') === 'true';
+
+  // Fetch persistent connection status from the API (not just URL param)
+  const { data: googleStatus } = useQuery({
+    queryKey: ['google-status'],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/auth/google/status`);
+      return res.json() as any;
+    },
+  });
+
+  const googleConnected = googleStatus?.connected || justConnected;
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <h2 className="font-medium text-gray-700">Google Sheets Integration</h2>
-      {googleConnected && (
+
+      {googleConnected ? (
         <div className="flex items-center gap-2 text-green-600 text-sm">
-          <CheckCircle className="w-4 h-4" /> Google account connected successfully!
+          <CheckCircle className="w-4 h-4" /> Google account connected
         </div>
+      ) : (
+        <p className="text-sm text-gray-500">
+          Connect your Google account to export feeds directly to Google Sheets.
+        </p>
       )}
-      <p className="text-sm text-gray-500">
-        Connect your Google account to export feeds directly to Google Sheets.
-      </p>
+
       <a
         href={`${API_URL}/auth/google?shop=${SHOP_DOMAIN}`}
         className="inline-flex items-center gap-2 bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
@@ -288,6 +286,159 @@ function GoogleCard({ googleConnected }: { googleConnected: boolean }) {
         {googleConnected ? 'Reconnect Google' : 'Connect Google Account'}
         <ExternalLink className="w-3 h-3 text-gray-400" />
       </a>
+
+      {googleConnected && (
+        <p className="text-xs text-gray-400">
+          Reconnect to grant access to browse Google Sheets in the feed editor.
+          Required scope: <code>drive.metadata.readonly</code>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Guide tab ─────────────────────────────────────────────────────────────────
+
+function GuideTab() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100">
+        <h2 className="font-medium text-gray-700 flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-gray-400" />
+          Feed Mapping Guide
+        </h2>
+      </div>
+      <div className="px-5 py-4 space-y-7 text-sm max-h-[75vh] overflow-y-auto">
+
+        {/* Source Types */}
+        <section>
+          <h3 className="font-semibold text-gray-800 mb-3">Source Types</h3>
+          <div className="space-y-2">
+            {[
+              ['product',   'Fields from the product record (title, vendor, tags, etc.)'],
+              ['variant',   'Fields from each variant (sku, price, barcode, options, etc.)'],
+              ['computed',  'Values built automatically from product + variant data (see below)'],
+              ['metafield', 'Custom metafields — enter key as namespace.key (e.g. custom.material)'],
+            ].map(([type, desc]) => (
+              <div key={type} className="flex gap-3">
+                <code className="shrink-0 text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded self-start">{type}</code>
+                <span className="text-xs text-gray-600">{desc}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Computed values */}
+        <section>
+          <h3 className="font-semibold text-gray-800 mb-3">Computed Values</h3>
+          <p className="text-xs text-gray-500 mb-2">Use these with <code className="bg-gray-100 px-1 rounded">sourceType = computed</code></p>
+          <div className="space-y-1.5">
+            {[
+              ['image_url',            'URL of the first product image'],
+              ['image_url_2 … image_url_8', 'URL of images 2 through 8'],
+              ['all_images',           'All image URLs, comma-separated'],
+              ['video_url',            'URL of the first product video (from media cache)'],
+              ['availability',         '"in stock" or "out of stock" based on inventory quantity'],
+              ['inventory',            'Total inventory quantity'],
+              ['product_url',          'Full Shopify storefront URL of the product'],
+              ['full_title',           'Product title + variant title (e.g. "T-Shirt / Blue / XL")'],
+              ['base_sku',             'SKU stripped of any trailing variant suffix'],
+            ].map(([key, desc]) => (
+              <div key={key} className="flex gap-3">
+                <code className="shrink-0 text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded self-start min-w-[170px]">{key}</code>
+                <span className="text-xs text-gray-600">{desc}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Transform formulas */}
+        <section>
+          <h3 className="font-semibold text-gray-800 mb-3">Transform Formulas</h3>
+          <p className="text-xs text-gray-500 mb-2">Enter in the Transform column. Chain multiple with a comma: <code className="bg-gray-100 px-1 rounded">strip_html, truncate:5000</code></p>
+          <div className="space-y-1.5">
+            {[
+              ['uppercase',     'Convert the value to UPPERCASE'],
+              ['lowercase',     'Convert the value to lowercase'],
+              ['strip_html',    'Remove all HTML tags'],
+              ['truncate:500',  'Truncate to 500 characters (replace 500 with any number)'],
+              ['append: INR',   'Append text after the value — e.g. "1999" → "1999 INR"'],
+              ['prepend:₹',     'Prepend text before the value — e.g. "1999" → "₹1999"'],
+              ['default:new',   'Use "new" if the field is empty or null'],
+            ].map(([formula, desc]) => (
+              <div key={formula} className="flex gap-3">
+                <code className="shrink-0 text-xs bg-orange-50 text-orange-700 px-2 py-0.5 rounded self-start min-w-[140px]">{formula}</code>
+                <span className="text-xs text-gray-600">{desc}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Metafields */}
+        <section>
+          <h3 className="font-semibold text-gray-800 mb-3">Metafields</h3>
+          <p className="text-xs text-gray-600 mb-2">
+            Set <strong>Source Type</strong> to <code className="bg-gray-100 px-1 rounded">metafield</code> and enter the key as{' '}
+            <code className="bg-gray-100 px-1 rounded">namespace.key</code>.
+          </p>
+          <div className="space-y-1.5 mb-3">
+            {[
+              ['custom.material',       'Custom metafield (namespace=custom, key=material)'],
+              ['custom.size_guide',     'Custom size guide metafield'],
+              ['seo.title',             'SEO title override'],
+              ['seo.description',       'SEO description override'],
+              ['shopify.color-pattern', 'Shopify built-in color metafield'],
+            ].map(([key, desc]) => (
+              <div key={key} className="flex gap-3">
+                <code className="shrink-0 text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded self-start min-w-[190px]">{key}</code>
+                <span className="text-xs text-gray-600">{desc}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+            <strong>To find metafield names:</strong> Shopify Admin → Settings → Custom data → Products.
+            The namespace and key are shown under each metafield definition.
+          </p>
+        </section>
+
+        {/* Example mapping */}
+        <section>
+          <h3 className="font-semibold text-gray-800 mb-3">Example: Google Merchant Center</h3>
+          <div className="rounded-lg border border-gray-200 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  {['Feed Column', 'Source Type', 'Source Key', 'Transform'].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 font-medium text-gray-500">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {[
+                  ['g:id',           'variant',  'sku',          ''],
+                  ['g:title',        'computed', 'full_title',   ''],
+                  ['g:description',  'product',  'description',  'strip_html, truncate:5000'],
+                  ['g:link',         'computed', 'product_url',  ''],
+                  ['g:image_link',   'computed', 'image_url',    ''],
+                  ['g:price',        'variant',  'price',        'append: INR'],
+                  ['g:availability', 'computed', 'availability', ''],
+                  ['g:brand',        'product',  'vendor',       ''],
+                  ['g:gtin',         'variant',  'barcode',      ''],
+                  ['g:condition',    'product',  'title',        'default:new'],
+                ].map(([col, src, key, transform]) => (
+                  <tr key={col} className="hover:bg-gray-50">
+                    <td className="px-3 py-1.5 font-mono font-medium text-brand-700">{col}</td>
+                    <td className="px-3 py-1.5 text-gray-500">{src}</td>
+                    <td className="px-3 py-1.5 font-mono text-gray-600">{key}</td>
+                    <td className="px-3 py-1.5 text-gray-400">{transform || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
     </div>
   );
 }
@@ -295,17 +446,17 @@ function GoogleCard({ googleConnected }: { googleConnected: boolean }) {
 // ── Settings inner ────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'general', label: 'General', icon: Settings },
+  { id: 'general', label: 'General', icon: Settings  },
   { id: 'logs',    label: 'Logs',    icon: ScrollText },
+  { id: 'guide',   label: 'Guide',   icon: BookOpen   },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
 
 function SettingsInner() {
-  const params         = useSearchParams();
-  const googleConnected = params.get('google_connected') === 'true';
-  const installed       = params.get('installed') === 'true';
-  const [tab, setTab]   = useState<TabId>('general');
+  const params    = useSearchParams();
+  const installed = params.get('installed') === 'true';
+  const [tab, setTab] = useState<TabId>('general');
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -340,11 +491,12 @@ function SettingsInner() {
       {tab === 'general' && (
         <>
           <SyncCard />
-          <GoogleCard googleConnected={googleConnected} />
+          <GoogleCard />
         </>
       )}
 
-      {tab === 'logs' && <LogsTab />}
+      {tab === 'logs'  && <LogsTab />}
+      {tab === 'guide' && <GuideTab />}
     </div>
   );
 }
