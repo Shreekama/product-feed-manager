@@ -103,13 +103,15 @@ feedRoutes.post('/', async (c) => {
     status: feedData.status || 'ACTIVE',
   });
 
-  if (schedule) {
-    const nextRunAt = computeNextRun(schedule.cronExpr);
+  // schedule.enabled === false (or a missing cronExpr) means "no schedule".
+  if (schedule && schedule.enabled !== false && schedule.cronExpr) {
+    const timezone = schedule.timezone || 'UTC';
+    const nextRunAt = computeNextRun(schedule.cronExpr, timezone);
     await db.insert(feedSchedules).values({
       id: crypto.randomUUID(),
       feedId,
       cronExpr: schedule.cronExpr,
-      timezone: schedule.timezone || 'UTC',
+      timezone,
       nextRunAt,
     });
   }
@@ -177,30 +179,38 @@ feedRoutes.put('/:id', async (c) => {
   await db.update(feeds).set(updateData).where(eq(feeds.id, feedId));
 
   if (schedule) {
-    const nextRunAt = computeNextRun(schedule.cronExpr);
-    const existingSchedule = await db.query.feedSchedules.findFirst({
-      where: (s, { eq: eq2 }) => eq2(s.feedId, feedId),
-      columns: { id: true },
-    });
+    const disabled = schedule.enabled === false || !schedule.cronExpr;
 
-    if (existingSchedule) {
-      await db
-        .update(feedSchedules)
-        .set({
-          cronExpr: schedule.cronExpr,
-          timezone: schedule.timezone || 'UTC',
-          nextRunAt,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(feedSchedules.id, existingSchedule.id));
+    if (disabled) {
+      // User turned the schedule off — remove it so the scheduler stops picking it up.
+      await db.delete(feedSchedules).where(eq(feedSchedules.feedId, feedId));
     } else {
-      await db.insert(feedSchedules).values({
-        id: crypto.randomUUID(),
-        feedId,
-        cronExpr: schedule.cronExpr,
-        timezone: schedule.timezone || 'UTC',
-        nextRunAt,
+      const timezone = schedule.timezone || 'UTC';
+      const nextRunAt = computeNextRun(schedule.cronExpr, timezone);
+      const existingSchedule = await db.query.feedSchedules.findFirst({
+        where: (s, { eq: eq2 }) => eq2(s.feedId, feedId),
+        columns: { id: true },
       });
+
+      if (existingSchedule) {
+        await db
+          .update(feedSchedules)
+          .set({
+            cronExpr: schedule.cronExpr,
+            timezone,
+            nextRunAt,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(feedSchedules.id, existingSchedule.id));
+      } else {
+        await db.insert(feedSchedules).values({
+          id: crypto.randomUUID(),
+          feedId,
+          cronExpr: schedule.cronExpr,
+          timezone,
+          nextRunAt,
+        });
+      }
     }
   }
 
@@ -294,9 +304,9 @@ feedRoutes.get('/:id/runs', async (c) => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function computeNextRun(cronExpr: string): string {
+function computeNextRun(cronExpr: string, timezone?: string | null): string {
   try {
-    const cron = new Cron(cronExpr);
+    const cron = new Cron(cronExpr, timezone ? { timezone } : undefined);
     const next = cron.nextRun();
     if (!next) throw new Error('No next run');
     return next.toISOString();

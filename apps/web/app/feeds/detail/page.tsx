@@ -13,6 +13,8 @@ import {
 import Link from 'next/link';
 import { clsx } from 'clsx';
 import { parseDate } from '../../../lib/dates';
+import { ScheduleFields } from '../../../components/ScheduleFields';
+import { scheduleToCron, cronToSchedule, DEFAULT_SCHEDULE, STORE_TIMEZONE } from '../../../lib/schedule';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 const OUTPUT_TYPES = ['CSV', 'XML', 'GOOGLE_SHEETS'];
@@ -134,7 +136,11 @@ function FeedEditInner() {
       columnMappings: [] as { feedColumn: string; sourceType: string; sourceKey: string; transform: string }[],
       filterRules: [] as { field: string; operator: string; value: string }[],
       scheduleEnabled: false,
-      cronExpr: '0 */6 * * *',
+      freq: DEFAULT_SCHEDULE.freq,
+      everyHours: DEFAULT_SCHEDULE.everyHours,
+      timeOfDay: DEFAULT_SCHEDULE.timeOfDay,
+      dayOfWeek: DEFAULT_SCHEDULE.dayOfWeek,
+      cronExpr: DEFAULT_SCHEDULE.cronExpr,
     },
   });
 
@@ -174,6 +180,7 @@ function FeedEditInner() {
     if (feed && !formReady) {
       const mappings = parseJsonField(feed.columnMappings);
       const filters  = parseJsonField((feed as any).filterRules);
+      const sched    = cronToSchedule((feed as any).schedule?.cronExpr);
       reset({
         name:            feed.name,
         platform:        feed.platform    || '',
@@ -184,7 +191,11 @@ function FeedEditInner() {
         columnMappings:  mappings,
         filterRules:     filters,
         scheduleEnabled: !!(feed as any).schedule,
-        cronExpr:        (feed as any).schedule?.cronExpr || '0 */6 * * *',
+        freq:            sched.freq,
+        everyHours:      sched.everyHours,
+        timeOfDay:       sched.timeOfDay,
+        dayOfWeek:       sched.dayOfWeek,
+        cronExpr:        sched.cronExpr,
       });
       setFormReady(true);
     }
@@ -202,7 +213,11 @@ function FeedEditInner() {
         googleSheetTab: data.googleSheetTab || null,
         columnMappings: data.columnMappings,
         filterRules:    data.filterRules,
-        ...(data.scheduleEnabled && { schedule: { cronExpr: data.cronExpr } }),
+        schedule: {
+          enabled:  data.scheduleEnabled,
+          cronExpr: scheduleToCron(data),
+          timezone: STORE_TIMEZONE,
+        },
       });
       qc.invalidateQueries({ queryKey: ['feed', id] });
       qc.invalidateQueries({ queryKey: ['feeds'] });
@@ -482,18 +497,7 @@ function FeedEditInner() {
             <input type="checkbox" id="sched-edit" {...register('scheduleEnabled')} className="rounded" />
             <label htmlFor="sched-edit" className="font-medium text-gray-700 cursor-pointer">Enable Schedule</label>
           </div>
-          {scheduleEnabled && (
-            <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1">Cron Expression (UTC)</label>
-              <input
-                {...register('cronExpr')}
-                className="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                Examples: <code>0 */6 * * *</code> (every 6h), <code>0 9 * * *</code> (daily 9 AM UTC)
-              </p>
-            </div>
-          )}
+          {scheduleEnabled && <ScheduleFields register={register} watch={watch} />}
         </section>
 
         {saveError && (

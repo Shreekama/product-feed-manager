@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { getDb } from '../db';
-import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns, feedSchedules } from '../db/schema';
+import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
 import { getShopifyToken } from '../services/shopify-auth';
@@ -14,7 +14,6 @@ function stripQuery(url: string | null | undefined): string {
 import { generateCsv } from '../generators/csv';
 import { generateXml } from '../generators/xml';
 import { generateSheets } from '../generators/sheets';
-import { Cron } from 'croner';
 
 export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
   batch,
@@ -611,19 +610,10 @@ async function handleFeedJob(
       })
       .where(eq(feedRuns.id, runId));
 
-    // Advance schedule
-    if (feed.schedule?.isActive) {
-      try {
-        const cron = new Cron(feed.schedule.cronExpr);
-        const nextRunAt = cron.nextRun()?.toISOString();
-        if (nextRunAt) {
-          await db
-            .update(feedSchedules)
-            .set({ nextRunAt, updatedAt: new Date().toISOString() })
-            .where(eq(feedSchedules.id, feed.schedule.id));
-        }
-      } catch { /* Non-fatal */ }
-    }
+    // NOTE: schedule advancement is owned entirely by the cron scheduler
+    // (src/cron/scheduler.ts), which bumps next_run_at at enqueue time.
+    // We deliberately do NOT advance it here — doing so would skip an interval
+    // for scheduled runs and would wrongly shift the cadence for manual runs.
 
     console.log(
       `Feed "${feed.name}" completed: ${rows.length} rows in ${durationMs}ms`,

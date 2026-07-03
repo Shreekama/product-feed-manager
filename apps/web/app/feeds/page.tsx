@@ -5,6 +5,7 @@ import { feedsApi } from '../../lib/api';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import { parseDate } from '../../lib/dates';
+import { describeCron } from '../../lib/schedule';
 import { Plus, Play, Pencil, Clock } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -13,36 +14,6 @@ const PLATFORM_BADGE: Record<string, string> = {
   FACEBOOK: 'bg-indigo-100 text-indigo-700',
   PINTEREST: 'bg-red-100 text-red-600',
 };
-
-/** Convert a UTC cron expression to a human-readable IST description. */
-function cronToHumanIST(expr: string): string {
-  try {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return expr;
-    const [minPart, hourPart, , , dowPart] = parts;
-
-    if (hourPart === '*' && minPart.startsWith('*/')) return `Every ${minPart.slice(2)} minutes`;
-    if (hourPart.startsWith('*/')) return `Every ${hourPart.slice(2)} hours`;
-    if (hourPart === '*') return 'Every hour';
-
-    const utcH = parseInt(hourPart, 10);
-    const utcM = parseInt(minPart, 10);
-    if (isNaN(utcH) || isNaN(utcM)) return expr;
-
-    const totalMin = utcH * 60 + utcM + 330; // UTC → IST (+5:30)
-    const istH = Math.floor(totalMin / 60) % 24;
-    const istM = totalMin % 60;
-    const period = istH >= 12 ? 'PM' : 'AM';
-    const displayH = istH % 12 || 12;
-    const timeStr = `${displayH}:${istM.toString().padStart(2, '0')} ${period} IST`;
-
-    if (dowPart === '*') return `Daily at ${timeStr}`;
-    const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const dayNum = parseInt(dowPart, 10);
-    if (!isNaN(dayNum) && DAYS[dayNum]) return `Every ${DAYS[dayNum]} at ${timeStr}`;
-    return `At ${timeStr}`;
-  } catch { return expr; }
-}
 
 export default function FeedsPage() {
   const qc = useQueryClient();
@@ -117,7 +88,7 @@ export default function FeedsPage() {
                     schedule.isActive ? 'text-brand-600' : 'text-gray-400',
                   )}>
                     <Clock className="w-3 h-3" />
-                    {cronToHumanIST(schedule.cronExpr)}
+                    {describeCron(schedule.cronExpr, schedule.timezone)}
                     {!schedule.isActive && <span className="ml-1">(paused)</span>}
                   </div>
                 )}
