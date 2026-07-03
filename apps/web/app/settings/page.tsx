@@ -233,7 +233,7 @@ function LogsTab() {
                 )}
               </div>
               <span className="shrink-0 text-xs text-gray-400 whitespace-nowrap">
-                {ev.time ? format(new Date(ev.time), 'MMM d, HH:mm') : '—'}
+                {(() => { const d = parseDate(ev.time); return d ? format(d, 'MMM d, HH:mm') : '—'; })()}
               </span>
             </div>
           ))}

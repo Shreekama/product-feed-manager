@@ -29,8 +29,16 @@ export const schedulerHandler: ExportedHandlerScheduledHandler<Env> = async (
   for (const schedule of dueSchedules) {
     const feed = schedule.feed;
 
-    if (feed.status !== 'ACTIVE') {
-      console.log(`Scheduler: skipping non-active feed "${feed.name}"`);
+    // Only archived feeds are excluded — mirror the "Run Now" endpoint, which
+    // blocks ARCHIVED only. Comparing case-insensitively so a feed stored as
+    // "active" (or any non-archived status) still runs on schedule.
+    if ((feed.status || '').toUpperCase() === 'ARCHIVED') {
+      console.log(`Scheduler: skipping archived feed "${feed.name}"`);
+      // Still advance the schedule so it doesn't stay perpetually "due".
+      await db
+        .update(feedSchedules)
+        .set({ nextRunAt: computeNextRun(schedule.cronExpr, schedule.timezone), updatedAt: new Date().toISOString() })
+        .where(eq(feedSchedules.id, schedule.id));
       continue;
     }
 
@@ -49,7 +57,7 @@ export const schedulerHandler: ExportedHandlerScheduledHandler<Env> = async (
         storeId: feed.storeId,
       });
 
-      const nextRunAt = computeNextRun(schedule.cronExpr);
+      const nextRunAt = computeNextRun(schedule.cronExpr, schedule.timezone);
       await db
         .update(feedSchedules)
         .set({ nextRunAt, updatedAt: new Date().toISOString() })
@@ -64,9 +72,9 @@ export const schedulerHandler: ExportedHandlerScheduledHandler<Env> = async (
   }
 };
 
-function computeNextRun(cronExpr: string): string {
+function computeNextRun(cronExpr: string, timezone?: string | null): string {
   try {
-    const cron = new Cron(cronExpr);
+    const cron = new Cron(cronExpr, timezone ? { timezone } : undefined);
     const next = cron.nextRun();
     if (!next) throw new Error('No next run');
     return next.toISOString();
