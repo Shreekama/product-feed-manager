@@ -1,6 +1,7 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { feedsApi } from '../lib/api';
 import { format } from 'date-fns';
 import { parseDate } from '../lib/dates';
@@ -89,9 +90,10 @@ export default function DashboardPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-500">
-                    {feed.lastRun?.completedAt && parseDate(feed.lastRun.completedAt)
-                      ? format(parseDate(feed.lastRun.completedAt)!, 'MMM d, HH:mm')
-                      : '—'}
+                    {(() => {
+                      const d = parseDate(feed.lastRun?.completedAt) ?? parseDate(feed.lastRun?.startedAt);
+                      return d ? format(d, 'MMM d, HH:mm') : '—';
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-gray-500">
                     {feed.nextRun && parseDate(feed.nextRun)
@@ -120,22 +122,40 @@ export default function DashboardPage() {
 }
 
 function RunButton({ feedId }: { feedId: string }) {
-  const handleRun = async () => {
-    try {
-      await feedsApi.triggerRun(feedId);
-      alert('Feed run enqueued!');
-    } catch {
-      alert('Failed to trigger run');
-    }
-  };
+  const qc = useQueryClient();
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const run = useMutation({
+    mutationFn: () => feedsApi.triggerRun(feedId),
+    onSuccess: () => {
+      setMsg({ text: 'Run queued', ok: true });
+      qc.invalidateQueries({ queryKey: ['feeds-dashboard'] });
+      setTimeout(() => setMsg(null), 4000);
+    },
+    onError: () => {
+      setMsg({ text: 'Failed to queue run', ok: false });
+      setTimeout(() => setMsg(null), 5000);
+    },
+  });
 
   return (
-    <button
-      onClick={handleRun}
-      className="inline-flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded transition-colors"
-    >
-      <Play className="w-3 h-3" />
-      Run
-    </button>
+    <span className="inline-flex items-center gap-2">
+      <button
+        onClick={() => run.mutate()}
+        disabled={run.isPending}
+        className="inline-flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded transition-colors disabled:opacity-50"
+      >
+        <Play className="w-3 h-3" />
+        {run.isPending ? 'Queuing…' : 'Run'}
+      </button>
+      {msg && (
+        <span
+          className={`inline-flex items-center gap-1 text-xs ${msg.ok ? 'text-green-600' : 'text-red-600'}`}
+        >
+          {msg.ok ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+          {msg.text}
+        </span>
+      )}
+    </span>
   );
 }

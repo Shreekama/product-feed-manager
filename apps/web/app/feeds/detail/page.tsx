@@ -13,6 +13,7 @@ import {
 import Link from 'next/link';
 import { clsx } from 'clsx';
 import { parseDate } from '../../../lib/dates';
+import { resolveOutputUrl, isOpenableOutput } from '../../../lib/output';
 import { ScheduleFields } from '../../../components/ScheduleFields';
 import { scheduleToCron, cronToSchedule, DEFAULT_SCHEDULE, STORE_TIMEZONE } from '../../../lib/schedule';
 
@@ -571,9 +572,7 @@ function FeedEditInner() {
               {(runs as any[]).map((run) => {
                 const cfg  = STATUS_CONFIG[run.status] || { label: run.status, icon: Clock, color: 'text-gray-500' };
                 const Icon = cfg.icon;
-                const isLink = run.outputUrl && (
-                  run.outputUrl.startsWith('http') || run.outputUrl.startsWith('/api/')
-                );
+                const isLink = isOpenableOutput(run.outputUrl);
                 return (
                   <tr key={run.id} className="hover:bg-gray-50">
                     <td className="py-2 px-2">
@@ -587,12 +586,12 @@ function FeedEditInner() {
                       {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
                     </td>
                     <td className="py-2 px-2 text-gray-500">
-                      {(() => { const d = parseDate(run.startedAt); return d ? format(d, 'MMM d HH:mm:ss') : '—'; })()}
+                      {(() => { const d = parseDate(run.startedAt) ?? parseDate(run.completedAt); return d ? format(d, 'MMM d HH:mm:ss') : '—'; })()}
                     </td>
                     <td className="py-2 px-2 text-xs">
                       {isLink ? (
                         <a
-                          href={run.outputUrl}
+                          href={resolveOutputUrl(run.outputUrl)!}
                           target="_blank"
                           rel="noreferrer"
                           className="text-brand-600 underline"

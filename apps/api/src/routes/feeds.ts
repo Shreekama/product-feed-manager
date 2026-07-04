@@ -264,6 +264,7 @@ feedRoutes.post('/:id/run', async (c) => {
     id: runId,
     feedId,
     status: 'PENDING',
+    startedAt: new Date().toISOString(),
   });
 
   await c.env.FEED_QUEUE.send({

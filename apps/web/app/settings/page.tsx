@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { parseDate } from '../../lib/dates';
+import { resolveOutputUrl } from '../../lib/output';
 import { clsx } from 'clsx';
 
 const SHOP_DOMAIN = 'd7f63b.myshopify.com';
@@ -226,7 +227,7 @@ function LogsTab() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-700 leading-snug">{ev.message}</p>
                 {ev.detail && (
-                  <a href={ev.detail} target="_blank" rel="noopener noreferrer"
+                  <a href={resolveOutputUrl(ev.detail)!} target="_blank" rel="noopener noreferrer"
                     className="text-xs text-brand-600 underline truncate block mt-0.5">
                     View output ↗
                   </a>

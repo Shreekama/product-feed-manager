@@ -48,6 +48,7 @@ export const schedulerHandler: ExportedHandlerScheduledHandler<Env> = async (
         id: runId,
         feedId: feed.id,
         status: 'PENDING',
+        startedAt: new Date().toISOString(),
       });
 
       await env.FEED_QUEUE.send({

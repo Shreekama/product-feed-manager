@@ -500,6 +500,8 @@ async function handleFeedJob(
   const db = getDb(env);
   const startTime = Date.now();
 
+  console.log(`[feed-job] start feedId=${feedId} runId=${runId}`);
+
   // Mark run as RUNNING
   await db
     .update(feedRuns)
