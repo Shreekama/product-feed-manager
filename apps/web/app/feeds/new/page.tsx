@@ -52,18 +52,19 @@ function getSourceKeys(sourceType: string): string[] {
   return [];
 }
 
-// Default Google Merchant mapping
+// Default Google Merchant mapping. Column names are kept plain (id, title,
+// price…) — the Google "g:" prefix is added automatically for XML feeds.
 const DEFAULT_GOOGLE_MAPPINGS = [
-  { feedColumn: 'g:id',           sourceType: 'variant',  sourceKey: 'sku',          transform: ''             },
-  { feedColumn: 'g:title',        sourceType: 'computed', sourceKey: 'full_title',   transform: ''             },
-  { feedColumn: 'g:description',  sourceType: 'product',  sourceKey: 'description',  transform: 'truncate:5000'},
-  { feedColumn: 'g:link',         sourceType: 'computed', sourceKey: 'product_url',  transform: ''             },
-  { feedColumn: 'g:image_link',   sourceType: 'computed', sourceKey: 'image_url',    transform: ''             },
-  { feedColumn: 'g:price',        sourceType: 'variant',  sourceKey: 'price',        transform: 'append: INR'  },
-  { feedColumn: 'g:availability', sourceType: 'computed', sourceKey: 'availability', transform: ''             },
-  { feedColumn: 'g:brand',        sourceType: 'product',  sourceKey: 'vendor',       transform: ''             },
-  { feedColumn: 'g:gtin',         sourceType: 'variant',  sourceKey: 'barcode',      transform: ''             },
-  { feedColumn: 'g:condition',    sourceType: 'fixed',    sourceKey: 'new',          transform: ''             },
+  { feedColumn: 'id',           sourceType: 'variant',  sourceKey: 'sku',          transform: ''             },
+  { feedColumn: 'title',        sourceType: 'computed', sourceKey: 'full_title',   transform: ''             },
+  { feedColumn: 'description',  sourceType: 'product',  sourceKey: 'description',  transform: 'truncate:5000'},
+  { feedColumn: 'link',         sourceType: 'computed', sourceKey: 'product_url',  transform: ''             },
+  { feedColumn: 'image_link',   sourceType: 'computed', sourceKey: 'image_url',    transform: ''             },
+  { feedColumn: 'price',        sourceType: 'variant',  sourceKey: 'price',        transform: 'append: INR'  },
+  { feedColumn: 'availability', sourceType: 'computed', sourceKey: 'availability', transform: ''             },
+  { feedColumn: 'brand',        sourceType: 'product',  sourceKey: 'vendor',       transform: ''             },
+  { feedColumn: 'gtin',         sourceType: 'variant',  sourceKey: 'barcode',      transform: ''             },
+  { feedColumn: 'condition',    sourceType: 'fixed',    sourceKey: 'new',          transform: ''             },
 ];
 
 export default function NewFeedPage() {
@@ -322,7 +323,7 @@ export default function NewFeedPage() {
                 <div key={field.id} className="grid grid-cols-[2fr_1fr_2fr_1.5fr_auto] gap-2 items-center">
                   <input
                     {...register(`columnMappings.${i}.feedColumn`)}
-                    placeholder="g:title"
+                    placeholder="title"
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <select

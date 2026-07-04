@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { plainColumn, googleXmlTag } from './columns';
 
 export interface XmlGeneratorResult {
   r2Key: string;
@@ -73,15 +74,22 @@ function genericHeader(feedName: string): string {
 }
 
 function buildGoogleItem(row: Record<string, string>): string {
+  // Add the Google "g:" namespace prefix here (title/link/description stay native RSS).
   const fields = Object.entries(row)
-    .map(([k, v]) => `      <${k}>${escapeXml(v)}</${k}>`)
+    .map(([k, v]) => {
+      const tag = googleXmlTag(k);
+      return `      <${tag}>${escapeXml(v)}</${tag}>`;
+    })
     .join('\n');
   return `    <item>\n${fields}\n    </item>\n`;
 }
 
 function buildGenericProduct(row: Record<string, string>): string {
   const fields = Object.entries(row)
-    .map(([k, v]) => `      <${xmlTag(k)}>${escapeXml(v)}</${xmlTag(k)}>`)
+    .map(([k, v]) => {
+      const tag = xmlTag(plainColumn(k));
+      return `      <${tag}>${escapeXml(v)}</${tag}>`;
+    })
     .join('\n');
   return `    <product>\n${fields}\n    </product>\n`;
 }
