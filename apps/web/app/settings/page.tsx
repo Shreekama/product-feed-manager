@@ -470,7 +470,7 @@ function GuideTab() {
                   </thead>
                   <tbody>
                     <tr>
-                      <td className="px-3 py-2 font-mono text-brand-700">g:google_product_category</td>
+                      <td className="px-3 py-2 font-mono text-brand-700">google_product_category</td>
                       <td className="px-3 py-2 text-gray-500">product</td>
                       <td className="px-3 py-2 font-mono text-gray-600">product_type</td>
                       <td className="px-3 py-2 font-mono text-gray-600 break-all">map:co-ord set=Apparel {'>'} Co-Ord Set|Lehenga=Apparel {'>'} Lehenga</td>
@@ -523,6 +523,13 @@ function GuideTab() {
         {/* Example mapping */}
         <section>
           <h3 className="font-semibold text-gray-800 mb-3">Example: Google Merchant Center</h3>
+          <p className="text-xs text-gray-500 mb-2">
+            Use plain attribute names (<code className="bg-gray-100 px-1 rounded">id</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">title</code>,{' '}
+            <code className="bg-gray-100 px-1 rounded">price</code>…). For XML feeds the Google{' '}
+            <code className="bg-gray-100 px-1 rounded">g:</code> namespace prefix is added automatically;
+            CSV feeds use the plain names as-is.
+          </p>
           <div className="rounded-lg border border-gray-200 overflow-hidden">
             <table className="w-full text-xs">
               <thead className="bg-gray-50 border-b border-gray-200">
@@ -534,16 +541,16 @@ function GuideTab() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {[
-                  ['g:id',           'variant',  'sku',          ''],
-                  ['g:title',        'computed', 'full_title',   ''],
-                  ['g:description',  'product',  'description',  'strip_html, truncate:5000'],
-                  ['g:link',         'computed', 'product_url',  ''],
-                  ['g:image_link',   'computed', 'image_url',    ''],
-                  ['g:price',        'variant',  'price',        'append: INR'],
-                  ['g:availability', 'computed', 'availability', ''],
-                  ['g:brand',        'product',  'vendor',       ''],
-                  ['g:gtin',         'variant',  'barcode',      ''],
-                  ['g:condition',    'fixed',    'new',          ''],
+                  ['id',           'variant',  'sku',          ''],
+                  ['title',        'computed', 'full_title',   ''],
+                  ['description',  'product',  'description',  'strip_html, truncate:5000'],
+                  ['link',         'computed', 'product_url',  ''],
+                  ['image_link',   'computed', 'image_url',    ''],
+                  ['price',        'variant',  'price',        'append: INR'],
+                  ['availability', 'computed', 'availability', ''],
+                  ['brand',        'product',  'vendor',       ''],
+                  ['gtin',         'variant',  'barcode',      ''],
+                  ['condition',    'fixed',    'new',          ''],
                 ].map(([col, src, key, transform]) => (
                   <tr key={col} className="hover:bg-gray-50">
                     <td className="px-3 py-1.5 font-mono font-medium text-brand-700">{col}</td>

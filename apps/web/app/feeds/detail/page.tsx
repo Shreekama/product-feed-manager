@@ -447,7 +447,7 @@ function FeedEditInner() {
                 <div key={field.id} className="grid grid-cols-[2fr_1fr_2fr_1.5fr_auto] gap-2 items-center">
                   <input
                     {...register(`columnMappings.${i}.feedColumn`)}
-                    placeholder="g:title"
+                    placeholder="title"
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <select

@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { plainColumn } from './columns';
 
 export interface CsvGeneratorResult {
   r2Key: string;
@@ -36,8 +37,9 @@ function buildCsvString(
 ): string {
   const lines: string[] = [];
 
-  // Header row
-  lines.push(headers.map(escapeCsvField).join(','));
+  // Header row — emit plain names (Google Merchant CSV expects "title", not "g:title").
+  // Values are still looked up by the original mapping key.
+  lines.push(headers.map((h) => escapeCsvField(plainColumn(h))).join(','));
 
   // Data rows
   for (const row of rows) {
