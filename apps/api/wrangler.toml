@@ -3,6 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+# Pinned so a deploy can only ever land on this Cloudflare account.
+account_id = "6643205cf7452a0d2ca4d5cad24d748d"
+
+workers_dev = true
+
 # Serves the Next.js static export (apps/web/out) at all non-/api/* routes
 [assets]
 directory = "../web/out"
@@ -13,14 +18,18 @@ APP_URL = "https://product-feed-manager.apps.shreekama.net"
 WEB_URL = "https://product-feed-manager.apps.shreekama.net"
 MEDIA_CACHE_TTL = "21600"
 
+[[routes]]
+pattern = "product-feed-manager.apps.shreekama.net"
+custom_domain = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "shopify-product-feed-db"
-database_id = "1f0b3ee3-2b01-4aaf-82fa-69f91648bccd"
+database_id = "07da80e2-f35f-4d94-bc94-21daf6d818c8"
 
 [[kv_namespaces]]
 binding = "MEDIA_KV"
-id = "96826c6a933e4c3d8e6b9b68e4641507"
+id = "a00e729872d4498f8e3c64194aa07db0"
 
 [[r2_buckets]]
 binding = "FEED_R2"
