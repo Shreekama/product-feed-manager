@@ -91,7 +91,13 @@ shopifyRoutes.get('/debug', async (c) => {
       }),
     });
     const body = await res.text();
-    tokenResult = { status: res.status, ok: res.ok, body };
+    // This endpoint is unauthenticated — never echo the access token itself.
+    if (res.ok) {
+      const { scope, expires_in } = JSON.parse(body);
+      tokenResult = { status: res.status, ok: true, scope, expires_in };
+    } else {
+      tokenResult = { status: res.status, ok: false, body };
+    }
   } catch (err: any) {
     tokenResult = { error: err.message };
   }
