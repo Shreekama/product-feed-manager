@@ -4,6 +4,7 @@ import { getDb } from '../db';
 import { stores, webhooks } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { getShopifyToken } from '../services/shopify-auth';
+import { startBulkSync } from '../services/sync';
 
 export const shopifyRoutes = new Hono<{ Bindings: Env }>();
 
@@ -394,43 +395,11 @@ shopifyRoutes.get('/sync/status', async (c) => {
 // ─── POST /sync ───────────────────────────────────────────────────────────────
 
 shopifyRoutes.post('/sync', async (c) => {
-  const shopDomain = 'd7f63b.myshopify.com';
-  const db = getDb(c.env);
-
-  let store = await db.query.stores.findFirst({
-    where: (s, { eq }) => eq(s.shopDomain, shopDomain),
-    columns: { id: true, syncStatus: true },
-  });
-
-  // Auto-create store record on first sync — token is fetched inflight, not stored
-  if (!store) {
-    const storeId = crypto.randomUUID();
-    await db.insert(stores).values({ id: storeId, shopDomain, accessToken: '', syncStatus: 'IDLE' });
-    store = { id: storeId, syncStatus: 'IDLE' };
-  }
-
-  if (store.syncStatus === 'SYNCING') {
+  const { started, storeId } = await startBulkSync(c.env, 'd7f63b.myshopify.com');
+  if (!started) {
     return c.json({ message: 'Sync already in progress' }, 202);
   }
-
-  // Set SYNCING immediately so the UI sees it on the next poll (queue runs async)
-  const startedAt = new Date().toISOString();
-  await Promise.all([
-    db.update(stores).set({ syncStatus: 'SYNCING', updatedAt: startedAt }).where(eq(stores.id, store.id)),
-    c.env.MEDIA_KV.put(
-      `sync_progress:${shopDomain}`,
-      JSON.stringify({ phase: 'submitting', processed: 0, startedAt, updatedAt: startedAt }),
-      { expirationTtl: 86400 },
-    ),
-  ]);
-
-  await c.env.FEED_QUEUE.send({
-    type: 'bulk-sync',
-    shopDomain,
-    storeId: store.id,
-  });
-
-  return c.json({ message: 'Sync started', storeId: store.id }, 202);
+  return c.json({ message: 'Sync started', storeId }, 202);
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
