@@ -3,12 +3,23 @@ import { getDb } from '../db';
 import { feedRuns, feedSchedules } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import type { Env } from '../types';
+import { startBulkSync } from '../services/sync';
+
+// Must match the product-sync entry in wrangler.toml [triggers].crons.
+// 03:00 and 15:00 UTC (08:30 / 20:30 IST) — the evening run lands ahead of
+// the 21:00 / 22:00 IST feed schedules so feeds go out with fresh data.
+export const PRODUCT_SYNC_CRON = '0 3,15 * * *';
 
 export const schedulerHandler: ExportedHandlerScheduledHandler<Env> = async (
-  _event,
+  event,
   env,
   _ctx,
 ) => {
+  if (event.cron === PRODUCT_SYNC_CRON) {
+    await runProductSync(env);
+    return;
+  }
+
   const db = getDb(env);
   const now = new Date().toISOString();
 
@@ -72,6 +83,21 @@ export const schedulerHandler: ExportedHandlerScheduledHandler<Env> = async (
     }
   }
 };
+
+async function runProductSync(env: Env): Promise<void> {
+  const allStores = await getDb(env).query.stores.findMany({
+    columns: { shopDomain: true },
+  });
+
+  for (const { shopDomain } of allStores) {
+    try {
+      const { started } = await startBulkSync(env, shopDomain);
+      console.log(`Scheduler: product sync for ${shopDomain} ${started ? 'enqueued' : 'already running'}`);
+    } catch (err) {
+      console.error(`Scheduler: failed to start product sync for ${shopDomain}:`, err);
+    }
+  }
+}
 
 function computeNextRun(cronExpr: string, timezone?: string | null): string {
   try {

@@ -46,4 +46,6 @@ max_batch_timeout = 30
 max_retries = 3
 
 [triggers]
-crons = ["* * * * *"]
+# "* * * * *"   — checks feed schedules every minute
+# "0 3,15 * * *" — automatic Shopify product sync (keep in sync with PRODUCT_SYNC_CRON in src/cron/scheduler.ts)
+crons = ["* * * * *", "0 3,15 * * *"]

@@ -15,6 +15,9 @@ import { generateCsv } from '../generators/csv';
 import { generateXml } from '../generators/xml';
 import { generateSheets } from '../generators/sheets';
 
+// Must match max_retries in wrangler.toml [[queues.consumers]].
+const MAX_QUEUE_RETRIES = 3;
+
 export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
   batch,
   env,
@@ -27,8 +30,14 @@ export const feedQueueConsumer: ExportedHandlerQueueHandler<Env> = async (
       else if (type === 'bulk-sync-process') await handleBulkSyncProcess(data, env);
       else if (type === 'feed-job')          await handleFeedJob(data, env);
       msg.ack();
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Queue message failed [${type}]:`, err);
+      // On the last delivery of a sync step, record the failure so the UI
+      // shows the error instead of sitting on "Syncing…" forever.
+      if (type?.startsWith('bulk-sync') && msg.attempts > MAX_QUEUE_RETRIES) {
+        await failSync(env, data.shopDomain, data.storeId, err?.message ?? String(err), data.startedAt ?? new Date().toISOString())
+          .catch((e) => console.error('failSync error:', e));
+      }
       msg.retry();
     }
   }
