@@ -236,6 +236,9 @@ export const ALTER_TABLE_SQL = [
   `ALTER TABLE products ADD COLUMN has_only_default_variant INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE products ADD COLUMN has_out_of_stock_variants INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE products ADD COLUMN exclude_from_feeds INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN shopify_created_at TEXT`,
+  // google_tokens — connected account email (was only cached in KV)
+  `ALTER TABLE google_tokens ADD COLUMN email TEXT`,
   // variants — columns added in schema expansion
   `ALTER TABLE variants ADD COLUMN available_for_sale INTEGER NOT NULL DEFAULT 1`,
   `ALTER TABLE variants ADD COLUMN inventory_quantity INTEGER NOT NULL DEFAULT 0`,

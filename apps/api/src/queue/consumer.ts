@@ -5,11 +5,17 @@ import { eq } from 'drizzle-orm';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
 import { getShopifyToken } from '../services/shopify-auth';
 
-/** Strip everything from '?' onwards in a Shopify CDN URL */
-function stripQuery(url: string | null | undefined): string {
+/**
+ * Clean a Shopify CDN image URL: drop every query param except `v`.
+ * `v` is the file's version — when a photo is replaced under the same file
+ * name only `v` changes, so keeping it makes Google/Meta re-fetch the image.
+ */
+function cleanImageUrl(url: string | null | undefined): string {
   if (!url) return '';
   const q = url.indexOf('?');
-  return q !== -1 ? url.slice(0, q) : url;
+  if (q === -1) return url;
+  const version = new URLSearchParams(url.slice(q + 1)).get('v');
+  return url.slice(0, q) + (version ? `?v=${version}` : '');
 }
 import { generateCsv } from '../generators/csv';
 import { generateXml } from '../generators/xml';
@@ -171,7 +177,7 @@ async function submitBulkOperation(
           products {
             edges {
               node {
-                id title vendor productType handle status tags bodyHtml publishedAt
+                id title vendor productType handle status tags bodyHtml publishedAt createdAt
                 images {
                   edges {
                     node {
@@ -304,6 +310,7 @@ function mapProductNode(node: any, storeId: string) {
     tags,
     bodyHtml: node.bodyHtml || null,
     publishedAt: node.publishedAt || null,
+    shopifyCreatedAt: node.createdAt || null,
   };
 }
 
@@ -337,16 +344,17 @@ async function upsertProductBatch(
 
     stmts.push(env.DB.prepare(`
       INSERT INTO products
-        (id, store_id, shopify_id, title, vendor, product_type, handle, status, tags, body_html, published_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, store_id, shopify_id, title, vendor, product_type, handle, status, tags, body_html, published_at, shopify_created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (shopify_id, store_id) DO UPDATE SET
         title = excluded.title, vendor = excluded.vendor,
         product_type = excluded.product_type, handle = excluded.handle,
         status = excluded.status, tags = excluded.tags,
         body_html = excluded.body_html, published_at = excluded.published_at,
+        shopify_created_at = excluded.shopify_created_at,
         updated_at = excluded.updated_at
     `).bind(id, p.storeId, p.shopifyId, p.title, p.vendor, p.productType,
-            p.handle, p.status, p.tags, p.bodyHtml, p.publishedAt, now));
+            p.handle, p.status, p.tags, p.bodyHtml, p.publishedAt, p.shopifyCreatedAt, now));
   }
 
   await d1Batch(env, stmts);
@@ -414,7 +422,7 @@ async function upsertVariantBatch(
       raw.availableForSale !== false ? 1 : 0,
       raw.position || 1,
       opts[0]?.value || null, opts[1]?.value || null, opts[2]?.value || null,
-      stripQuery(raw.image?.url) || null, now,
+      cleanImageUrl(raw.image?.url) || null, now,
     ));
   }
 
@@ -442,7 +450,7 @@ async function upsertImageBatch(
     if (!productId) continue;
 
     images.forEach((img, i) => {
-      const src = stripQuery(img.url);
+      const src = cleanImageUrl(img.url);
       if (!src) return;
       stmts.push(env.DB.prepare(`
         INSERT INTO product_images (id, product_id, shopify_id, src, alt_text, width, height, position)

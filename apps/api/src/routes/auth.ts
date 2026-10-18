@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { getDb } from '../db';
 import { googleTokens } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { getGoogleAccessToken, fetchGoogleEmail } from '../services/google-auth';
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
 
@@ -191,6 +192,7 @@ authRoutes.get('/google/callback', async (c) => {
     await db.update(googleTokens).set({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token || undefined,
+      email: null, // may be a different account now — re-read below
       expiresAt,
       scope: tokens.scope || '',
       updatedAt: new Date().toISOString(),
@@ -206,29 +208,26 @@ authRoutes.get('/google/callback', async (c) => {
     });
   }
 
-  // Fetch user email (requires userinfo.email scope) and cache in KV
+  // Record which Google account was connected (requires userinfo.email scope)
   try {
-    const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-    });
-    if (userinfoRes.ok) {
-      const userinfo = (await userinfoRes.json()) as any;
-      if (userinfo.email) {
-        await c.env.MEDIA_KV.put(
-          `google_email:${store.id}`,
-          userinfo.email,
-          { expirationTtl: 30 * 24 * 3600 },
-        );
-      }
+    const email = await fetchGoogleEmail(tokens.access_token);
+    if (email) {
+      await db.update(googleTokens).set({ email }).where(eq(googleTokens.storeId, store.id));
     }
   } catch { /* non-fatal */ }
 
   return c.redirect(`${c.env.WEB_URL}/settings?google_connected=true&shop=${shopDomain}`);
 });
 
-// ─── GET /google/status — check if Google is connected for the store ───────────
+// ─── GET /google/status — connected account, health and feeds using it ────────
 
 const SHOP_DOMAIN_CONST = 'd7f63b.myshopify.com';
+
+const REQUIRED_GOOGLE_SCOPES: Record<string, string> = {
+  'https://www.googleapis.com/auth/spreadsheets': 'Write feeds to Google Sheets',
+  'https://www.googleapis.com/auth/drive.metadata.readonly': 'Browse your sheets in the feed editor',
+  'https://www.googleapis.com/auth/userinfo.email': 'Show which account is connected',
+};
 
 authRoutes.get('/google/status', async (c) => {
   const db = getDb(c.env);
@@ -237,12 +236,91 @@ authRoutes.get('/google/status', async (c) => {
     columns: { id: true },
   });
   if (!store) return c.json({ connected: false, email: null });
-  const token = await db.query.googleTokens.findFirst({
+
+  const tokenRow = await db.query.googleTokens.findFirst({
     where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
+  });
+  if (!tokenRow) return c.json({ connected: false, email: null });
+
+  // A connection only counts as healthy if we can actually get a token.
+  let healthy = true;
+  let error: string | null = null;
+  let accessToken: string | null = null;
+  try {
+    accessToken = await getGoogleAccessToken(c.env, store.id);
+  } catch (err: any) {
+    healthy = false;
+    error = err.message;
+  }
+
+  // Older connections only stored the email in KV (30-day TTL) — backfill it.
+  let email = tokenRow.email || (await c.env.MEDIA_KV.get(`google_email:${store.id}`));
+  if (!email && accessToken) {
+    email = await fetchGoogleEmail(accessToken).catch(() => null);
+  }
+  if (email && email !== tokenRow.email) {
+    await db.update(googleTokens).set({ email }).where(eq(googleTokens.id, tokenRow.id));
+  }
+
+  const granted = new Set((tokenRow.scope || '').split(' ').filter(Boolean));
+  const missingScopes = Object.entries(REQUIRED_GOOGLE_SCOPES)
+    .filter(([scope]) => !granted.has(scope))
+    .map(([, purpose]) => purpose);
+
+  const { results: feeds } = await c.env.DB.prepare(`
+    SELECT f.id, f.name, f.google_sheet_id, f.google_sheet_tab,
+           (SELECT status FROM feed_runs r WHERE r.feed_id = f.id ORDER BY r.started_at DESC LIMIT 1) AS last_status,
+           (SELECT COALESCE(completed_at, started_at) FROM feed_runs r WHERE r.feed_id = f.id ORDER BY r.started_at DESC LIMIT 1) AS last_run_at,
+           (SELECT error_message FROM feed_runs r WHERE r.feed_id = f.id ORDER BY r.started_at DESC LIMIT 1) AS last_error
+    FROM feeds f
+    WHERE f.store_id = ? AND f.google_sheet_id IS NOT NULL AND f.google_sheet_id != ''
+    ORDER BY f.name
+  `).bind(store.id).all<any>();
+
+  return c.json({
+    connected: true,
+    email: email || null,
+    healthy,
+    error,
+    missingScopes,
+    lastRefreshedAt: tokenRow.updatedAt,
+    feeds: feeds.map((f) => ({
+      id: f.id,
+      name: f.name,
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${f.google_sheet_id}`,
+      tab: f.google_sheet_tab || 'Feed',
+      lastStatus: f.last_status,
+      lastRunAt: f.last_run_at,
+      lastError: f.last_error,
+    })),
+  });
+});
+
+// ─── POST /google/disconnect — revoke access and forget the token ─────────────
+
+authRoutes.post('/google/disconnect', async (c) => {
+  const db = getDb(c.env);
+  const store = await db.query.stores.findFirst({
+    where: (s, { eq: eq2 }) => eq2(s.shopDomain, SHOP_DOMAIN_CONST),
     columns: { id: true },
   });
-  const email = token ? await c.env.MEDIA_KV.get(`google_email:${store.id}`) : null;
-  return c.json({ connected: !!token, email: email || null });
+  if (!store) return c.json({ error: 'Store not configured' }, 404);
+
+  const tokenRow = await db.query.googleTokens.findFirst({
+    where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
+  });
+  if (tokenRow) {
+    // Best effort: revoking the refresh token also invalidates its access tokens.
+    await fetch('https://oauth2.googleapis.com/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token: tokenRow.refreshToken || tokenRow.accessToken }).toString(),
+    }).catch(() => {});
+    await db.delete(googleTokens).where(eq(googleTokens.id, tokenRow.id));
+  }
+  await c.env.MEDIA_KV.delete(`google_email:${store.id}`);
+
+  return c.json({ ok: true });
 });
 
 // ─── GET /google/sheets — list Google Sheets from connected account ────────────
@@ -255,33 +333,11 @@ authRoutes.get('/google/sheets', async (c) => {
   });
   if (!store) return c.json({ error: 'Store not configured' }, 404);
 
-  const tokenRow = await db.query.googleTokens.findFirst({
-    where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
-  });
-  if (!tokenRow) return c.json({ error: 'Google not connected' }, 401);
-
-  // Refresh token if expired
-  let accessToken = tokenRow.accessToken;
-  if (new Date(tokenRow.expiresAt) < new Date()) {
-    if (!tokenRow.refreshToken) return c.json({ error: 'Token expired, please reconnect' }, 401);
-    const refreshRes = await fetch(GOOGLE_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: c.env.GOOGLE_CLIENT_ID,
-        client_secret: c.env.GOOGLE_CLIENT_SECRET,
-        refresh_token: tokenRow.refreshToken,
-        grant_type: 'refresh_token',
-      }).toString(),
-    });
-    if (!refreshRes.ok) return c.json({ error: 'Token refresh failed, please reconnect' }, 401);
-    const refreshed = (await refreshRes.json()) as any;
-    accessToken = refreshed.access_token;
-    await db.update(googleTokens).set({
-      accessToken,
-      expiresAt: new Date(Date.now() + (refreshed.expires_in || 3600) * 1000).toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).where(eq(googleTokens.id, tokenRow.id));
+  let accessToken: string;
+  try {
+    accessToken = await getGoogleAccessToken(c.env, store.id);
+  } catch (err: any) {
+    return c.json({ error: `${err.message} — please reconnect Google` }, 401);
   }
 
   // List spreadsheets from Google Drive
@@ -310,32 +366,11 @@ authRoutes.get('/google/sheet-info', async (c) => {
   });
   if (!store) return c.json({ error: 'Store not configured' }, 404);
 
-  const tokenRow = await db.query.googleTokens.findFirst({
-    where: (t, { eq: eq2 }) => eq2(t.storeId, store.id),
-  });
-  if (!tokenRow) return c.json({ error: 'Google not connected' }, 401);
-
-  let accessToken = tokenRow.accessToken;
-  if (new Date(tokenRow.expiresAt) < new Date()) {
-    if (!tokenRow.refreshToken) return c.json({ error: 'Token expired' }, 401);
-    const refreshRes = await fetch(GOOGLE_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: c.env.GOOGLE_CLIENT_ID,
-        client_secret: c.env.GOOGLE_CLIENT_SECRET,
-        refresh_token: tokenRow.refreshToken,
-        grant_type: 'refresh_token',
-      }).toString(),
-    });
-    if (!refreshRes.ok) return c.json({ error: 'Token refresh failed' }, 401);
-    const refreshed = (await refreshRes.json()) as any;
-    accessToken = refreshed.access_token;
-    await db.update(googleTokens).set({
-      accessToken,
-      expiresAt: new Date(Date.now() + (refreshed.expires_in || 3600) * 1000).toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).where(eq(googleTokens.id, tokenRow.id));
+  let accessToken: string;
+  try {
+    accessToken = await getGoogleAccessToken(c.env, store.id);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 401);
   }
 
   const sheetsRes = await fetch(

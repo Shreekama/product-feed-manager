@@ -14,13 +14,14 @@ import {
   type VisibilityState,
 } from '@tanstack/react-table';
 import { productsApi } from '../../lib/api';
+import { Lightbox, type LightboxImage } from '../../components/Lightbox';
 import { parseDate } from '../../lib/dates';
 import {
   Search, ChevronLeft, ChevronRight, RefreshCw, Settings2,
   ChevronUp, ChevronDown, ChevronsUpDown, Check, X,
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 const CURRENCY = '₹';
@@ -50,8 +51,20 @@ type VariantRow = {
   productType: string | null;
   status: string;
   excludeFromFeeds: boolean;
+  createdAt: string | null; // product createdAt in Shopify
   images: ImgEntry[];
 };
+
+type LightboxState = { images: LightboxImage[]; index: number; title: string };
+
+/** All of the product's photos, with the variant's own photo included if it isn't one of them. */
+function galleryFor(row: VariantRow): LightboxImage[] {
+  const imgs: LightboxImage[] = row.images.map((i) => ({ src: i.src, altText: i.altText }));
+  if (row.imageSrc && !imgs.some((i) => i.src === row.imageSrc)) {
+    imgs.unshift({ src: row.imageSrc, altText: row.productTitle });
+  }
+  return imgs;
+}
 
 function expandVariants(products: any[]): VariantRow[] {
   const rows: VariantRow[] = [];
@@ -79,6 +92,7 @@ function expandVariants(products: any[]): VariantRow[] {
         productType: p.productType || null,
         status: p.status,
         excludeFromFeeds: p.excludeFromFeeds,
+        createdAt: p.shopifyCreatedAt || null,
         images,
       });
     }
@@ -90,7 +104,7 @@ function expandVariants(products: any[]): VariantRow[] {
 
 const ALL_COL_IDS = [
   'select', 'thumbnail', 'product', 'sku', 'vendor', 'productType', 'price', 'compareAt',
-  'inventory', 'status', 'option1', 'option2', 'option3',
+  'inventory', 'status', 'createdAt', 'option1', 'option2', 'option3',
   'image1', 'image2', 'image3', 'image4', 'image5', 'image6', 'image7', 'image8',
   'video1', 'video2', 'barcode', 'exclude',
 ];
@@ -98,7 +112,7 @@ const ALL_COL_IDS = [
 const COL_LABELS: Record<string, string> = {
   select: 'Select', thumbnail: 'Thumbnail', product: 'Product', sku: 'SKU',
   vendor: 'Vendor', productType: 'Product Type', price: 'Price', compareAt: 'Compare At',
-  inventory: 'Inventory', status: 'Status',
+  inventory: 'Inventory', status: 'Status', createdAt: 'Created',
   option1: 'Option 1', option2: 'Option 2', option3: 'Option 3',
   image1: 'Image 1', image2: 'Image 2', image3: 'Image 3', image4: 'Image 4',
   image5: 'Image 5', image6: 'Image 6', image7: 'Image 7', image8: 'Image 8',
@@ -109,7 +123,7 @@ const NON_HIDEABLE = new Set(['select', 'thumbnail', 'product', 'exclude']);
 
 const DEFAULT_VIS: VisibilityState = {
   select: true, thumbnail: true, product: true, sku: true, vendor: true,
-  productType: false, price: true, inventory: true, status: true, exclude: true,
+  productType: false, price: true, inventory: true, status: true, createdAt: true, exclude: true,
   compareAt: false, option1: false, option2: false, option3: false,
   image1: false, image2: false, image3: false, image4: false,
   image5: false, image6: false, image7: false, image8: false,
@@ -122,6 +136,12 @@ function loadPref<T>(key: string, fallback: T): T {
     const v = localStorage.getItem(key);
     return v ? JSON.parse(v) : fallback;
   } catch { return fallback; }
+}
+
+/** Saved column order, with columns added since it was saved appended at the end. */
+function loadColumnOrder(): ColumnOrderState {
+  const saved = loadPref<string[]>(ORD_KEY, ALL_COL_IDS).filter((id) => ALL_COL_IDS.includes(id));
+  return [...saved, ...ALL_COL_IDS.filter((id) => !saved.includes(id))];
 }
 
 // ── Sync banner ───────────────────────────────────────────────────────────────
@@ -190,24 +210,43 @@ function SyncBanner() {
 
 // ── Thumbnail cell ─────────────────────────────────────────────────────────────
 
-function Thumb({ row }: { row: VariantRow }) {
+function Thumb({ row, onOpen }: { row: VariantRow; onOpen: (lb: LightboxState) => void }) {
   const src = row.imageSrc || row.images[0]?.src;
   if (!src) return <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-300 text-[10px]">—</div>;
+  const gallery = galleryFor(row);
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={row.productTitle} className="w-10 h-10 object-cover rounded border border-gray-100" />
+    <button
+      type="button"
+      onClick={() => onOpen({ images: gallery, index: Math.max(0, gallery.findIndex((i) => i.src === src)), title: row.productTitle })}
+      className="relative block rounded focus:outline-none focus:ring-2 focus:ring-brand-500"
+      title={`View ${gallery.length} photo${gallery.length === 1 ? '' : 's'}`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={row.productTitle} className="w-10 h-10 object-cover rounded border border-gray-100 hover:opacity-80 transition-opacity" />
+      {gallery.length > 1 && (
+        <span className="absolute -bottom-1 -right-1 bg-gray-800 text-white text-[9px] leading-none rounded px-1 py-0.5">
+          {gallery.length}
+        </span>
+      )}
+    </button>
   );
 }
 
 // ── Image cell ────────────────────────────────────────────────────────────────
 
-function ImgCell({ src }: { src: string | undefined }) {
+function ImgCell({ row, n, onOpen }: { row: VariantRow; n: number; onOpen: (lb: LightboxState) => void }) {
+  const src = row.images[n - 1]?.src;
   if (!src) return <span className="text-gray-300 text-xs">—</span>;
+  const gallery = galleryFor(row);
   return (
-    <a href={src} target="_blank" rel="noopener noreferrer">
+    <button
+      type="button"
+      onClick={() => onOpen({ images: gallery, index: Math.max(0, gallery.findIndex((i) => i.src === src)), title: row.productTitle })}
+      className="block rounded focus:outline-none focus:ring-2 focus:ring-brand-500"
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt="" className="w-10 h-10 object-cover rounded border border-gray-100 hover:scale-150 transition-transform" />
-    </a>
+      <img src={src} alt="" className="w-10 h-10 object-cover rounded border border-gray-100 hover:opacity-80 transition-opacity" />
+    </button>
   );
 }
 
@@ -323,10 +362,12 @@ export default function ProductsPage() {
     () => loadPref(VIS_KEY, DEFAULT_VIS),
   );
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(
-    () => loadPref(ORD_KEY, ALL_COL_IDS),
+    loadColumnOrder,
   );
   const [sorting, setSorting] = useState<SortingState>([]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
 
   useEffect(() => { localStorage.setItem(VIS_KEY, JSON.stringify(columnVisibility)); }, [columnVisibility]);
   useEffect(() => { localStorage.setItem(ORD_KEY, JSON.stringify(columnOrder)); }, [columnOrder]);
@@ -392,7 +433,7 @@ export default function ProductsPage() {
     colHelper.display({
       id: 'thumbnail',
       header: 'Image',
-      cell: ({ row }) => <Thumb row={row.original} />,
+      cell: ({ row }) => <Thumb row={row.original} onOpen={setLightbox} />,
       enableSorting: false,
     }),
     // Product
@@ -475,6 +516,18 @@ export default function ProductsPage() {
         </span>
       ),
     }),
+    // Created (in Shopify)
+    colHelper.accessor('createdAt', {
+      id: 'createdAt',
+      header: 'Created',
+      cell: ({ getValue }) => {
+        const d = parseDate(getValue());
+        return d
+          ? <span className="text-gray-600 text-xs whitespace-nowrap" title={d.toLocaleString()}>{format(d, 'd MMM yyyy')}</span>
+          : <span className="text-gray-300 text-xs">—</span>;
+      },
+      sortingFn: (a, b) => (a.original.createdAt || '').localeCompare(b.original.createdAt || ''),
+    }),
     // Option 1
     colHelper.accessor('option1', {
       id: 'option1',
@@ -498,7 +551,7 @@ export default function ProductsPage() {
       colHelper.display({
         id: `image${n}`,
         header: `Image ${n}`,
-        cell: ({ row }) => <ImgCell src={row.original.images[n - 1]?.src} />,
+        cell: ({ row }) => <ImgCell row={row.original} n={n} onOpen={setLightbox} />,
         enableSorting: false,
       }),
     ),
@@ -730,6 +783,15 @@ export default function ProductsPage() {
           </table>
         )}
       </div>
+
+      {lightbox && (
+        <Lightbox
+          images={lightbox.images}
+          startIndex={lightbox.index}
+          title={lightbox.title}
+          onClose={closeLightbox}
+        />
+      )}
 
       {/* Pagination */}
       <div className="flex items-center justify-between mt-4 text-sm text-gray-600">
