@@ -26,7 +26,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       {/* Login overlay — shows when not authenticated, hides itself once signed in */}
       <AuthOverlay onAuth={handleAuth} />
-      {children}
+      {/* The API rejects requests without a session, so only mount the app once signed in */}
+      {user && children}
     </QueryClientProvider>
   );
 }

@@ -12,6 +12,7 @@ import { mediaRoutes } from './routes/media';
 import { authRoutes } from './routes/auth';
 import { feedQueueConsumer } from './queue/consumer';
 import { schedulerHandler } from './cron/scheduler';
+import { requireSession } from './middleware/session';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -26,6 +27,9 @@ app.use(
     allowHeaders: ['Content-Type', 'Authorization'],
   }),
 );
+
+// Every API route needs a signed-in session unless it's listed as public.
+app.use('/api/*', requireSession);
 
 // ─── R2 file download — must be before feedRoutes middleware ─────────────────
 app.get('/api/feeds/file', async (c) => {

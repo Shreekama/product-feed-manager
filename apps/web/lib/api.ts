@@ -16,6 +16,19 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Session expired (or signed out in another tab): reload so the sign-in screen
+// shows. The timestamp guard stops a reload loop if the API keeps refusing.
+apiClient.interceptors.response.use(undefined, (error) => {
+  if (typeof window !== 'undefined' && error?.response?.status === 401) {
+    const last = Number(sessionStorage.getItem('pfm_401_reload') || 0);
+    if (Date.now() - last > 10_000) {
+      sessionStorage.setItem('pfm_401_reload', String(Date.now()));
+      window.location.reload();
+    }
+  }
+  return Promise.reject(error);
+});
+
 // ─── Products ─────────────────────────────────────────────────────────────────
 
 export interface ProductsQuery {
