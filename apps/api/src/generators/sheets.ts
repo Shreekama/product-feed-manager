@@ -1,5 +1,5 @@
-import { getDb } from '../db';
 import type { Env } from '../types';
+import { getGoogleAccessToken } from '../services/google-auth';
 
 export interface SheetsGeneratorResult {
   sheetUrl: string;
@@ -20,26 +20,7 @@ export async function generateSheets(
   rows: Record<string, string>[],
   env: Env,
 ): Promise<SheetsGeneratorResult> {
-  const db = getDb(env);
-
-  const tokenRecord = await db.query.googleTokens.findFirst({
-    where: (t, { eq }) => eq(t.storeId, storeId),
-  });
-
-  if (!tokenRecord) {
-    throw new Error('No Google OAuth token found for this store');
-  }
-
-  let accessToken = tokenRecord.accessToken;
-
-  // Refresh token if expired
-  const expiresAt = new Date(tokenRecord.expiresAt).getTime();
-  if (Date.now() >= expiresAt - 60_000) {
-    if (!tokenRecord.refreshToken) {
-      throw new Error('Google token expired and no refresh token available');
-    }
-    accessToken = await refreshAccessToken(tokenRecord.refreshToken, storeId, db, env);
-  }
+  const accessToken = await getGoogleAccessToken(env, storeId);
 
   // Ensure tab exists
   await ensureTab(sheetId, tabName, accessToken);
@@ -168,40 +149,4 @@ async function getSheetTabId(
     (s: any) => s.properties?.title === tabName,
   );
   return tab?.properties?.sheetId ?? 0;
-}
-
-async function refreshAccessToken(
-  refreshToken: string,
-  storeId: string,
-  db: any,
-  env: Env,
-): Promise<string> {
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-    }).toString(),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to refresh Google token: ${res.status}`);
-  }
-
-  const data = (await res.json()) as any;
-  const newAccessToken = data.access_token as string;
-  const expiresAt = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
-
-  // Update token in DB
-  const { googleTokens } = await import('../db/schema');
-  const { eq } = await import('drizzle-orm');
-  await db
-    .update(googleTokens)
-    .set({ accessToken: newAccessToken, expiresAt })
-    .where(eq(googleTokens.storeId, storeId));
-
-  return newAccessToken;
 }

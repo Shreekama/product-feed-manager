@@ -49,6 +49,7 @@ export const products = sqliteTable(
     tags: text('tags').notNull().default('[]'), // JSON array
     bodyHtml: text('body_html'),
     publishedAt: text('published_at'),
+    shopifyCreatedAt: text('shopify_created_at'), // product createdAt in Shopify
     excludeFromFeeds: integer('exclude_from_feeds', { mode: 'boolean' })
       .notNull()
       .default(false),
@@ -429,6 +430,7 @@ export const googleTokens = sqliteTable(
     refreshToken: text('refresh_token'),
     expiresAt: text('expires_at').notNull(),
     scope: text('scope').notNull().default(''),
+    email: text('email'), // Google account the token belongs to
     createdAt: text('created_at').notNull().default("(datetime('now'))"),
     updatedAt: text('updated_at').notNull().default("(datetime('now'))"),
   },

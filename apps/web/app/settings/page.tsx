@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle, ExternalLink, RefreshCw, AlertCircle, Package, Square,
   ScrollText, Settings, BookOpen,
@@ -313,12 +313,24 @@ function StoreSettingsCard() {
 
 // ── Google Sheets card ────────────────────────────────────────────────────────
 
-function GoogleCard() {
-  const params       = useSearchParams();
-  const justConnected = params.get('google_connected') === 'true';
+function GoogleLogo() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+    </svg>
+  );
+}
 
-  // Fetch persistent connection status from the API (not just URL param)
-  const { data: googleStatus } = useQuery({
+function GoogleCard() {
+  const params        = useSearchParams();
+  const justConnected = params.get('google_connected') === 'true';
+  const queryClient   = useQueryClient();
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const { data: status, isLoading } = useQuery({
     queryKey: ['google-status'],
     queryFn: async () => {
       const res = await fetch(`${API_URL}/auth/google/status`);
@@ -326,46 +338,141 @@ function GoogleCard() {
     },
   });
 
-  const googleConnected = googleStatus?.connected || justConnected;
-  const googleEmail = googleStatus?.email || null;
+  const connected = status?.connected ?? justConnected;
+  const healthy   = status?.healthy !== false;
+  const email: string | null = status?.email || null;
+  const feeds: any[] = status?.feeds || [];
+  const missingScopes: string[] = status?.missingScopes || [];
+  const connectHref = `${API_URL}/auth/google?shop=${SHOP_DOMAIN}`;
+
+  const disconnect = async () => {
+    if (!confirm(`Disconnect ${email || 'this Google account'}? Feeds that write to Google Sheets will fail until you connect again.`)) return;
+    setDisconnecting(true);
+    try {
+      await fetch(`${API_URL}/auth/google/disconnect`, { method: 'POST' });
+      await queryClient.invalidateQueries({ queryKey: ['google-status'] });
+    } finally {
+      setDisconnecting(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
       <h2 className="font-medium text-gray-700">Google Sheets Integration</h2>
 
-      {googleConnected ? (
-        <div className="flex items-center gap-2 text-green-600 text-sm">
-          <CheckCircle className="w-4 h-4" />
-          Google account connected
-          {googleEmail && (
-            <span className="text-gray-500 font-normal">({googleEmail})</span>
-          )}
-        </div>
+      {isLoading ? (
+        <p className="text-sm text-gray-400">Checking connection…</p>
+      ) : !connected ? (
+        <>
+          <p className="text-sm text-gray-500">
+            Connect your Google account to export feeds directly to Google Sheets.
+          </p>
+          <a
+            href={connectHref}
+            className="inline-flex items-center gap-2 bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            <GoogleLogo />
+            Connect Google Account
+            <ExternalLink className="w-3 h-3 text-gray-400" />
+          </a>
+        </>
       ) : (
-        <p className="text-sm text-gray-500">
-          Connect your Google account to export feeds directly to Google Sheets.
-        </p>
-      )}
+        <>
+          {/* Connected account */}
+          <div className={clsx(
+            'flex items-center gap-3 rounded-lg border p-3',
+            healthy ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50',
+          )}>
+            <div className="w-9 h-9 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0">
+              <GoogleLogo />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-gray-800 truncate">
+                {email || 'Google account (email not available)'}
+              </div>
+              <div className={clsx('text-xs flex items-center gap-1', healthy ? 'text-green-700' : 'text-red-600')}>
+                {healthy
+                  ? <><CheckCircle className="w-3.5 h-3.5" /> Connected and working</>
+                  : <><AlertCircle className="w-3.5 h-3.5" /> Google rejected the saved sign-in — reconnect to fix</>}
+              </div>
+              {!healthy && status?.error && (
+                <div className="text-xs text-red-500 mt-0.5">{status.error}</div>
+              )}
+            </div>
+          </div>
 
-      <a
-        href={`${API_URL}/auth/google?shop=${SHOP_DOMAIN}`}
-        className="inline-flex items-center gap-2 bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
-      >
-        <svg className="w-4 h-4" viewBox="0 0 24 24">
-          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-        </svg>
-        {googleConnected ? 'Reconnect Google' : 'Connect Google Account'}
-        <ExternalLink className="w-3 h-3 text-gray-400" />
-      </a>
+          {missingScopes.length > 0 && (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2">
+              Missing permissions: {missingScopes.join(', ')}. Reconnect and allow all requested access.
+            </div>
+          )}
 
-      {googleConnected && (
-        <p className="text-xs text-gray-400">
-          Reconnect to grant access to browse Google Sheets in the feed editor.
-          Required scope: <code>drive.metadata.readonly</code>
-        </p>
+          {/* Feeds writing to Sheets */}
+          <div>
+            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+              Feeds writing to Google Sheets
+            </h3>
+            {feeds.length === 0 ? (
+              <p className="text-xs text-gray-400">No feeds are set up to write to a Google Sheet yet.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100 border border-gray-100 rounded-md">
+                {feeds.map((f) => {
+                  const ranAt = parseDate(f.lastRunAt);
+                  return (
+                    <li key={f.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-gray-800 truncate">{f.name}</div>
+                        <div className="text-xs text-gray-400">
+                          Tab “{f.tab}”
+                          {ranAt && <> · last run {formatDistanceToNow(ranAt, { addSuffix: true })}</>}
+                        </div>
+                        {f.lastStatus === 'FAILED' && f.lastError && (
+                          <div className="text-xs text-red-500 truncate" title={f.lastError}>{f.lastError}</div>
+                        )}
+                      </div>
+                      {f.lastStatus && (
+                        <span className={clsx(
+                          'text-xs font-medium px-2 py-0.5 rounded-full shrink-0',
+                          f.lastStatus === 'SUCCESS' ? 'bg-green-100 text-green-700'
+                            : f.lastStatus === 'FAILED' ? 'bg-red-100 text-red-600'
+                            : 'bg-gray-100 text-gray-500',
+                        )}>
+                          {f.lastStatus === 'SUCCESS' ? 'OK' : f.lastStatus === 'FAILED' ? 'Failed' : f.lastStatus.toLowerCase()}
+                        </span>
+                      )}
+                      <a
+                        href={f.sheetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline shrink-0"
+                      >
+                        Open sheet <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={connectHref}
+              className="inline-flex items-center gap-2 bg-white border border-gray-300 px-3 py-1.5 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-gray-500" />
+              {healthy ? 'Switch account' : 'Reconnect'}
+            </a>
+            <button
+              onClick={disconnect}
+              disabled={disconnecting}
+              className="inline-flex items-center gap-2 border border-red-200 text-red-600 px-3 py-1.5 rounded-md text-sm font-medium hover:bg-red-50 disabled:opacity-50 transition-colors"
+            >
+              {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

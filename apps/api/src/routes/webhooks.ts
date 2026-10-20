@@ -169,6 +169,7 @@ async function upsertProduct(db: any, storeId: string, payload: any): Promise<vo
     tags: JSON.stringify(tags),
     bodyHtml: payload.body_html || null,
     publishedAt: payload.published_at || null,
+    shopifyCreatedAt: payload.created_at || null,
     updatedAt: new Date().toISOString(),
   };
 
