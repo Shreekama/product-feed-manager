@@ -291,6 +291,15 @@ async function processJsonlStream(
   await upsertImageBatch(imageBuffer, productMap, env);
   await upsertMetafieldBatch(metafieldBuffer, productMap, env);
 
+  // The bulk export is a full snapshot of the store, so anything we still
+  // hold that it didn't contain was deleted in Shopify.
+  await removeDeletedFromShopify(storeId, env, {
+    products: new Set(productMap.keys()),
+    variants: new Set(variantBuffer.map((v) => v.raw.id)),
+    product_images: new Set(imageBuffer.map((img) => img.id)),
+    metafields: new Set(metafieldBuffer.map((mf) => mf.id)),
+  });
+
   return totalProcessed;
 }
 
@@ -494,6 +503,48 @@ async function upsertMetafieldBatch(
   }
 
   await d1Batch(env, stmts);
+}
+
+// Rows of each table belonging to the store, keyed by their Shopify ID.
+// Children come before products so nothing is left orphaned.
+const STORE_ROWS_SQL = {
+  variants:       `SELECT v.id, v.shopify_id FROM variants v JOIN products p ON p.id = v.product_id WHERE p.store_id = ?`,
+  product_images: `SELECT i.id, i.shopify_id FROM product_images i JOIN products p ON p.id = i.product_id WHERE p.store_id = ?`,
+  metafields:     `SELECT m.id, m.shopify_id FROM metafields m JOIN products p ON p.id = m.product_id WHERE p.store_id = ?`,
+  products:       `SELECT id, shopify_id FROM products WHERE store_id = ?`,
+};
+
+/**
+ * Delete products, variants, photos and metafields that are no longer in
+ * Shopify. `seen` holds the Shopify IDs present in this sync's export.
+ */
+async function removeDeletedFromShopify(
+  storeId: string,
+  env: Env,
+  seen: Record<keyof typeof STORE_ROWS_SQL, Set<string>>,
+): Promise<void> {
+  // An empty export would mean deleting the whole catalogue — never do that.
+  if (!seen.products.size) return;
+
+  const missing = async (table: keyof typeof STORE_ROWS_SQL) => {
+    const { results } = await env.DB.prepare(STORE_ROWS_SQL[table]).bind(storeId).all<{ id: string; shopify_id: string }>();
+    return { total: results.length, gone: results.filter((r) => !seen[table].has(r.shopify_id)) };
+  };
+
+  // Safety net: if most of the catalogue suddenly looks deleted, the export
+  // is more likely incomplete than the store emptied — keep everything.
+  const products = await missing('products');
+  if (products.gone.length > 10 && products.gone.length > products.total / 2) {
+    console.warn(`[cleanup] ${products.gone.length}/${products.total} products missing from export — skipping cleanup`);
+    return;
+  }
+
+  for (const table of Object.keys(STORE_ROWS_SQL) as (keyof typeof STORE_ROWS_SQL)[]) {
+    const { gone } = table === 'products' ? products : await missing(table);
+    if (!gone.length) continue;
+    console.log(`[cleanup] removing ${gone.length} ${table} deleted in Shopify`);
+    await d1Batch(env, gone.map((r) => env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(r.id)));
+  }
 }
 
 async function markSyncDone(db: any, storeId: string): Promise<void> {

@@ -4,6 +4,7 @@ import { getDb } from '../db';
 import { googleTokens } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { getGoogleAccessToken, fetchGoogleEmail } from '../services/google-auth';
+import { getSession } from '../middleware/session';
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
 
@@ -103,15 +104,8 @@ authRoutes.post('/callback', async (c) => {
 
 // GET /status — check current session
 authRoutes.get('/status', async (c) => {
-  const sessionId = _getSessionCookie(c.req.header('Cookie'));
-  if (!sessionId) return c.json({ authenticated: false });
-
-  const raw = await c.env.MEDIA_KV.get(`session:${sessionId}`);
-  if (!raw) return c.json({ authenticated: false });
-
-  const session = JSON.parse(raw);
-  if (new Date(session.expiresAt) < new Date()) return c.json({ authenticated: false });
-
+  const session = await getSession(c);
+  if (!session) return c.json({ authenticated: false });
   return c.json({ authenticated: true, user: { email: session.userEmail, name: session.userName } });
 });
 
