@@ -3,6 +3,7 @@ import { getDb } from '../db';
 import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
+import { loadLocalCurrency } from '../services/local-price';
 import { getShopifyToken } from '../services/shopify-auth';
 
 /**
@@ -624,6 +625,17 @@ async function handleFeedJob(
     // Images come directly from DB (Shopify CDN URLs, query params already stripped)
     const mediaMap = new Map<string, any>();
 
+    // Only feeds that map a local_* price need the currency app's rates.
+    const needsLocalCurrency = columnMappings.some(
+      (m) => m.sourceType === 'computed' && m.sourceKey.startsWith('local_'),
+    );
+    const localCurrency = needsLocalCurrency
+      ? await loadLocalCurrency(env, feed.country, store.shopDomain).catch((err) => {
+          console.warn(`[feed-job] local currency unavailable, using INR: ${err}`);
+          return null;
+        })
+      : null;
+
     // Map each variant to a feed row
     const headers = columnMappings.map((m) => m.feedColumn);
     const rows: Record<string, string>[] = [];
@@ -633,7 +645,7 @@ async function handleFeedJob(
       const batch = filtered.slice(i, i + BATCH_SIZE);
       const batchRows = await Promise.all(
         batch.map((variant) =>
-          buildRow(variant, columnMappings, mediaMap, env, store.primaryDomain || store.shopDomain),
+          buildRow(variant, columnMappings, mediaMap, env, store.primaryDomain || store.shopDomain, localCurrency),
         ),
       );
       rows.push(...batchRows);

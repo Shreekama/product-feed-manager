@@ -22,7 +22,7 @@ const OUTPUT_TYPES = ['CSV', 'XML', 'GOOGLE_SHEETS'];
 const SOURCE_TYPES = ['product', 'variant', 'metafield', 'computed', 'fixed'];
 const COMPUTED_KEYS = [
   'image_url', 'all_images', 'image_url_2', 'image_url_3',
-  'video_url', 'inventory', 'availability', 'product_url', 'full_title', 'base_sku',
+  'video_url', 'inventory', 'availability', 'product_url', 'full_title', 'base_sku', 'local_price', 'local_compare_at_price',
 ];
 const PRODUCT_KEYS = ['title', 'vendor', 'product_type', 'handle', 'tags', 'description', 'body_html'];
 const VARIANT_KEYS = [
