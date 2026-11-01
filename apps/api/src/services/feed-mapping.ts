@@ -1,6 +1,6 @@
 import { deriveBaseSku } from './media';
 import type { Env } from '../types';
-import { formatLocalPrice, type LocalCurrency } from './local-price';
+import { localPriceFor, type PriceContext } from './local-price';
 
 export interface ColumnMapping {
   feedColumn: string;
@@ -23,7 +23,7 @@ export async function buildRow(
   _mediaMap: Map<string, any>,
   env: Env,
   shopDomain?: string,
-  localCurrency: LocalCurrency | null = null,
+  priceContext: PriceContext | null = null,
 ): Promise<FeedRow> {
   const row: FeedRow = {};
   const product = variant.product;
@@ -49,7 +49,7 @@ export async function buildRow(
           value = resolveMetafield(product, mapping.sourceKey);
           break;
         case 'computed':
-          value = resolveComputed(mapping.sourceKey, variant, product, totalInventory, shopDomain, localCurrency);
+          value = resolveComputed(mapping.sourceKey, variant, product, totalInventory, shopDomain, priceContext);
           break;
         case 'fixed':
           // sourceKey is used as a literal value; if blank, nothing is written
@@ -132,7 +132,7 @@ function resolveComputed(
   product: any,
   inventory: number,
   shopDomain?: string,
-  localCurrency: LocalCurrency | null = null,
+  priceContext: PriceContext | null = null,
 ): string {
   // product.images is sorted by position, URLs already have query params stripped
   const productImgs: any[] = product.images || [];
@@ -159,9 +159,9 @@ function resolveComputed(
       return variant.sku ? deriveBaseSku(variant.sku) || '' : '';
     case 'local_price':
       // Price in the feed country's currency, as the storefront shows it
-      return formatLocalPrice(variant.price, localCurrency);
+      return localPriceFor(variant, 'price', priceContext);
     case 'local_compare_at_price':
-      return formatLocalPrice(variant.compareAtPrice, localCurrency);
+      return localPriceFor(variant, 'compareAtPrice', priceContext);
     case 'full_title':
       return variant.title !== 'Default Title'
         ? `${product.title} - ${variant.title}`

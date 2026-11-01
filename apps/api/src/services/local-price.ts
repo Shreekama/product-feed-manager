@@ -107,6 +107,41 @@ export async function loadLocalCurrency(
   };
 }
 
+/** A variant's final price in one country's market, as Shopify resolves it. */
+export interface MarketPrice {
+  price: string;
+  compareAtPrice: string | null;
+  currency: string;
+}
+
+export interface PriceContext {
+  local: LocalCurrency | null;
+  /** Shopify variant GID -> market price; null when it couldn't be fetched. */
+  market: Map<string, MarketPrice> | null;
+}
+
+/**
+ * The local price for a variant field, starting from the price Shopify shows
+ * in that country (Markets percentage adjustments and fixed prices included)
+ * and then converting it the way the storefront does.
+ */
+export function localPriceFor(
+  variant: { shopifyId?: string; price?: string | null; compareAtPrice?: string | null },
+  field: 'price' | 'compareAtPrice',
+  ctx: PriceContext | null,
+): string {
+  const market = variant.shopifyId ? ctx?.market?.get(variant.shopifyId) : undefined;
+  const amount = market ? market[field] : variant[field];
+
+  // Shopify itself already sells in a local currency here (e.g. Shopify
+  // Payments), so the storefront shows that price and the converter stays out.
+  if (market && market.currency !== 'INR') {
+    const major = parseFloat(String(amount ?? ''));
+    return major > 0 ? `${major.toFixed(2)} ${market.currency}` : '';
+  }
+  return formatLocalPrice(amount, ctx?.local ?? null);
+}
+
 /**
  * "<amount> <CODE>" for a store-currency (INR) amount, converted and rounded
  * like price-display.js. Without a local currency the INR amount is returned
