@@ -3,7 +3,7 @@ import { getDb } from '../db';
 import { stores, products, variants, inventoryLevels, metafields, productImages, feedRuns } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { buildRow, type ColumnMapping } from '../services/feed-mapping';
-import { loadLocalCurrency } from '../services/local-price';
+import { loadLocalCurrency, type MarketPrice } from '../services/local-price';
 import { getShopifyToken } from '../services/shopify-auth';
 
 /**
@@ -629,11 +629,19 @@ async function handleFeedJob(
     const needsLocalCurrency = columnMappings.some(
       (m) => m.sourceType === 'computed' && m.sourceKey.startsWith('local_'),
     );
-    const localCurrency = needsLocalCurrency
-      ? await loadLocalCurrency(env, feed.country, store.shopDomain).catch((err) => {
-          console.warn(`[feed-job] local currency unavailable, using INR: ${err}`);
-          return null;
-        })
+    const priceContext = needsLocalCurrency
+      ? {
+          local: await loadLocalCurrency(env, feed.country, store.shopDomain).catch((err) => {
+            console.warn(`[feed-job] local currency unavailable, using INR: ${err}`);
+            return null;
+          }),
+          // The storefront converts the price Shopify shows in that country,
+          // after any Markets adjustment, so start from the same price.
+          market: await fetchMarketPrices(env, store.shopDomain, feed.country).catch((err) => {
+            console.warn(`[feed-job] market prices unavailable for ${feed.country}, using base prices: ${err}`);
+            return null;
+          }),
+        }
       : null;
 
     // Map each variant to a feed row
@@ -645,7 +653,7 @@ async function handleFeedJob(
       const batch = filtered.slice(i, i + BATCH_SIZE);
       const batchRows = await Promise.all(
         batch.map((variant) =>
-          buildRow(variant, columnMappings, mediaMap, env, store.primaryDomain || store.shopDomain, localCurrency),
+          buildRow(variant, columnMappings, mediaMap, env, store.primaryDomain || store.shopDomain, priceContext),
         ),
       );
       rows.push(...batchRows);
@@ -684,6 +692,7 @@ async function handleFeedJob(
       .update(feedRuns)
       .set({
         status: 'SUCCESS',
+        errorMessage: null,
         recordsProcessed: rows.length,
         recordsSkipped: activeVariants.length - filtered.length,
         completedAt: new Date().toISOString(),
@@ -713,6 +722,55 @@ async function handleFeedJob(
       .where(eq(feedRuns.id, runId));
     throw err;
   }
+}
+
+// ─── Market prices ────────────────────────────────────────────────────────────
+
+/**
+ * Every variant's final price for a buyer in `country`, as Shopify resolves it:
+ * Markets percentage adjustments and fixed prices included.
+ */
+async function fetchMarketPrices(
+  env: Env,
+  shopDomain: string,
+  country: string,
+): Promise<Map<string, MarketPrice>> {
+  const accessToken = await getShopifyToken(shopDomain, env);
+  const query = `
+    query MarketPrices($country: CountryCode!, $after: String) {
+      productVariants(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          contextualPricing(context: { country: $country }) {
+            price { amount currencyCode }
+            compareAtPrice { amount }
+          }
+        }
+      }
+    }
+  `;
+
+  const prices = new Map<string, MarketPrice>();
+  let after: string | null = null;
+  do {
+    const data = await shopifyGraphql(
+      shopDomain, accessToken, query, { country: country.toUpperCase(), after }, 3, '2026-07',
+    );
+    const page = data.productVariants;
+    for (const v of page.nodes) {
+      const cp = v.contextualPricing;
+      if (!cp?.price) continue;
+      prices.set(v.id, {
+        price: cp.price.amount,
+        compareAtPrice: cp.compareAtPrice?.amount ?? null,
+        currency: cp.price.currencyCode,
+      });
+    }
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (after);
+
+  return prices;
 }
 
 // ─── Filter Engine ────────────────────────────────────────────────────────────
@@ -781,10 +839,11 @@ async function shopifyGraphql(
   query: string,
   variables: Record<string, any>,
   retries = 3,
+  apiVersion = '2024-04',
 ): Promise<any> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await fetch(
-      `https://${shopDomain}/admin/api/2024-04/graphql.json`,
+      `https://${shopDomain}/admin/api/${apiVersion}/graphql.json`,
       {
         method: 'POST',
         headers: {
