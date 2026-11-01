@@ -1,5 +1,7 @@
 export interface Env {
   DB: D1Database;
+  /** Read-only: the currency converter app's DB (FX rates + display settings). */
+  FX_DB?: D1Database;
   MEDIA_KV: KVNamespace;
   FEED_R2: R2Bucket;
   FEED_QUEUE: Queue;

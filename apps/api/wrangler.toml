@@ -27,6 +27,14 @@ binding = "DB"
 database_name = "shopify-product-feed-db"
 database_id = "07da80e2-f35f-4d94-bc94-21daf6d818c8"
 
+# Read-only: rates and display settings of the currency converter app
+# (Shreekama/shopify-currency-converter), so local-currency feed prices match
+# what the storefront shows. Never written to from here.
+[[d1_databases]]
+binding = "FX_DB"
+database_name = "scc-pricing-db"
+database_id = "08b9bd31-d5e0-4ae2-bb20-76e573c9992b"
+
 [[kv_namespaces]]
 binding = "MEDIA_KV"
 id = "a00e729872d4498f8e3c64194aa07db0"

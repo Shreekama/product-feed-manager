@@ -524,6 +524,8 @@ function GuideTab() {
               ['inventory',            'Total inventory quantity'],
               ['product_url',          'Full Shopify storefront URL of the product'],
               ['full_title',           'Product title + variant title (e.g. "T-Shirt / Blue / XL")'],
+              ['local_price',          "Price in the feed country's currency (e.g. \"181 USD\"), converted and rounded exactly as the storefront shows it. Falls back to INR if no rate is available"],
+              ['local_compare_at_price', 'Compare-at price in the feed country\'s currency, same rules as local_price'],
               ['base_sku',             'SKU stripped of any trailing variant suffix'],
             ].map(([key, desc]) => (
               <div key={key} className="flex gap-3">
